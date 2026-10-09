@@ -1,4 +1,0 @@
-# Gradle's launcher scripts must keep their line endings regardless of the checkout platform.
-gradlew     text eol=lf
-*.bat       text eol=crlf
-*.jar       binary
