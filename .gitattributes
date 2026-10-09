@@ -1,0 +1,4 @@
+# Model weights are large binaries (hrnet_fidip.pth is ~255 MB, over GitHub's 100 MB limit): keep them in Git LFS.
+models/*.pt filter=lfs diff=lfs merge=lfs -text
+models/*.pth filter=lfs diff=lfs merge=lfs -text
+models/*.task filter=lfs diff=lfs merge=lfs -text

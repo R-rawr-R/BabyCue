@@ -1,0 +1,5 @@
+# Optional safe-sleep detection (sleep position + crib hazards). Same as: pip install -e .[ml]
+mediapipe>=0.10.14
+torch>=2.2
+ultralytics>=8.4
+yacs>=0.1.8

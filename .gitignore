@@ -6,3 +6,8 @@ build/
 dist/
 .pytest_cache/
 .ruff_cache/
+
+# Model weights: too large for the fork (no LFS on public forks); download separately, see models/README.md
+models/*.pt
+models/*.pth
+models/*.task

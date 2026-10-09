@@ -43,7 +43,8 @@ class SocketSource:
         while True:
             if self._should_stop():
                 raise ServerStopping
-            readable, _, _ = select.select([self._conn], [], [], self._poll)
+            pending = getattr(self._conn, "pending", None)  # TLS: decrypted bytes select() cannot see
+            readable = bool(pending and pending()) or bool(select.select([self._conn], [], [], self._poll)[0])
             if readable:
                 try:
                     return self._conn.recv(n)
