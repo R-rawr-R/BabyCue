@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">BabyCue</string>
+    <string name="subtitle">Input films and sends to the BabyCue server. Output shows what the server relays.</string>
+    <string name="start">Start</string>
+    <string name="stop">Stop</string>
+    <string name="open_settings">Open app settings</string>
+    <string name="role_input">Input (camera)</string>
+    <string name="role_output">Output (viewer)</string>
+    <string name="server_hint">Server address, e.g. 192.168.1.20:8080</string>
+    <string name="video_description">Video relayed by the BabyCue server</string>
+
+    <string name="status_bad_address">Enter the server address as shown by the server, e.g. 192.168.1.20:8080.</string>
+    <string name="status_idle_permission_needed">Stopped. Tap Start; Android will ask for camera permission.</string>
+    <string name="status_idle_ready">Stopped. Camera permission granted.</string>
+    <string name="status_started_capturing">Capturing from the rear camera and sending to the server.</string>
+    <string name="status_output_idle">Stopped. Tap Start to watch the video relayed by the server.</string>
+    <string name="status_output_watching">Watching the relayed video.</string>
+    <string name="status_camera_error">Camera error: %1$s</string>
+    <string name="status_denied">Camera permission was denied. The app cannot capture video without it. Tap Start to be asked again.</string>
+    <string name="status_denied_permanent">Camera permission is blocked. Enable it for BabyCue in the app settings.</string>
+
+    <string name="link_connecting">Connecting to %1$s…</string>
+    <string name="link_sending">Sending video to %1$s. Unencrypted HTTP: trusted Wi-Fi only.</string>
+    <string name="link_waiting">Connected to %1$s. Waiting for video from the input phone…</string>
+    <string name="link_receiving">Receiving video from %1$s.</string>
+    <string name="link_retrying">%1$s. Retrying in %2$d s…</string>
+
+    <string name="stats_waiting">Waiting for the first frame…</string>
+    <string name="stats_format">Frames: %1$d · %2$.1f fps · %3$d×%4$d · last JPEG %5$.0f KB</string>
+    <string name="stats_output_format">Frames: %1$d · %2$.1f fps</string>
+</resources>

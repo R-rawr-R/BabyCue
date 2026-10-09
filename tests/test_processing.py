@@ -2,8 +2,8 @@ import cv2
 import numpy as np
 import pytest
 
-from babycue_camera.devtools.test_pattern_server import render_pattern
-from babycue_camera.processing import (
+from babycue_server.devtools.fake_input import render_pattern
+from babycue_server.processing import (
     FrameContext,
     ImageQualityProcessor,
     ProcessingPipeline,

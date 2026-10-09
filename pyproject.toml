@@ -3,30 +3,27 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "babycue-camera"
-version = "0.1.0"
-description = "BabyCue: stream a phone camera to a PC over the local network (MJPEG over HTTP)"
+name = "babycue-server"
+version = "0.2.0"
+description = "BabyCue: Python server that relays video from an input phone to an output phone over the local network"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "PySide6>=6.6,<6.12",  # 6.12.0 over-releases None (fatal none_dealloc on Python 3.11)
     "opencv-python-headless>=4.8",
     "numpy>=1.26",
-    "requests>=2.31",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-qt>=4.4", "ruff>=0.5"]
+dev = ["pytest>=8", "ruff>=0.5"]
 
 [project.scripts]
-babycue-camera = "babycue_camera.app:main"
+babycue-server = "babycue_server.__main__:main"
 
 [tool.setuptools.packages.find]
-include = ["babycue_camera*"]
+include = ["babycue_server*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-qt_api = "pyside6"
 
 [tool.ruff]
 line-length = 120

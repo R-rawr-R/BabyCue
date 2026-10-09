@@ -1,27 +1,27 @@
-# Manual test plan (real phone)
+# Manual test plan (real phones)
 
-Automated tests use a local synthetic MJPEG server. The checks below need a real phone and have
-**not yet been performed**. Record results (date, phone model, app version, network) when you run
-them.
+Automated tests use localhost sockets and fake servers. Everything below needs real phones and a real
+network and has **not yet been performed** (mark each NOT TESTED until run). Record the date, phone models,
+app version and network when you run them.
 
-Setup: Windows PC with the viewer installed, an Android phone running IP Webcam, and both on the
-same home Wi-Fi.
+Setup: the server running on the Windows PC (`python -m babycue_server`), two Android phones with the debug APK,
+all on the same trusted Wi-Fi, port 8080 allowed in Windows Firewall.
 
 | # | Test | Steps | Expected |
 |---|------|-------|----------|
-| M1 | Live feed | Start server in app, enter `http://<ip>:8080/video`, Connect | Live video within a few seconds, status *Live*, resolution matches app setting, frame rate > 0 |
-| M2 | Latency | Wave a hand in front of the camera | Delay is noticeable but short (aim: under 1 s at 640×480) |
-| M3 | Invalid URL | Enter `192.168.1` and `rtsp://...` | Validation error, no connection attempt |
-| M4 | Wrong path | Enter `http://<ip>:8080/nope` | "Stream endpoint not found (HTTP 404)" |
-| M5 | Wrong IP | Enter an unused LAN IP | "did not respond" message within ~4 s, UI stays usable |
-| M6 | App stopped | While streaming, stop the server in the app | Overlay *NOT LIVE — reconnecting*, frozen frame is dimmed; restart server → video resumes automatically |
-| M7 | Wi-Fi drop | Turn phone Wi-Fi off for 10 s, then on (IP unchanged) | Reconnecting, then live again |
-| M8 | Frozen source | Cover the app with another camera app or lock the phone | *STALE FEED* overlay after ~2 s, fps shows 0 |
-| M9 | Resolution change | Change resolution in the app web UI and restart its server | Resolution readout updates |
-| M10 | Disconnect | Click Disconnect | Video cleared, status *Disconnected*. App's web UI/connection count shows the client gone |
-| M11 | No internet | Unplug the router's WAN cable (or use phone hotspot with mobile data off) | Streaming still works |
-| M12 | Low light | Dim the room gradually | Lighting changes to *Too dark* / *Very dark*; enhancement checkbox brightens the display and shows the "not night vision" badge |
-| M13 | Blur | Move the phone quickly or defocus | Sharpness shows *blurry* in a well-lit scene |
-| M14 | Login | Enable login in the app; connect without and then with credentials | Clear "requires username and password"; works with correct ones |
-| M15 | Responsiveness | Stream at 1280×720 with enhancement on; drag and resize the window | No freezing |
-| M16 | Long run | Stream for 1 hour | No crash; memory use stays flat in Task Manager |
+| M1 | Basic relay | Phone A: Input + server address, Start. Phone B: Output + same address, Start | B shows A's live picture; A shows frames/fps rising; `http://PC:8080/status` shows input_connected, viewers 1 |
+| M2 | Latency | Wave a hand in front of A | Delay noticeable but short |
+| M3 | Browser viewer | Open `http://PC:8080/` on the PC | Same picture; viewers count +1 |
+| M4 | Bad address | Enter garbage / wrong IP | Clear message; no crash; Start works after fixing |
+| M5 | Second input | Start a second Input phone | Rejected with "Another phone is already sending video", keeps retrying; first unaffected |
+| M6 | Input stop/start | Tap Stop on A, then Start | B stops updating (no frozen live claim), resumes by itself |
+| M7 | Server restart | Stop and restart the server | Both phones show Retrying, then reconnect without touching them |
+| M8 | Wi-Fi drop | Switch A's Wi-Fi off 10 s, then on | A retries and resumes |
+| M9 | Permission | Deny camera on A, then allow via the button/settings | Clear messages; works after allowing |
+| M10 | Rotation | Rotate both phones | No crash; picture orientation correct |
+| M11 | Background/lock | Press Home or lock A, then return and tap Start | Streaming stops while away, resumes on return |
+| M12 | Output without camera | Run Output on a device with no camera | Installs and works |
+| M13 | Firewall/isolation | Block port 8080, or use a guest network | Phones show "Cannot connect"/"did not respond", never hang |
+| M14 | No internet | Disconnect the router from the internet | Relay still works |
+| M15 | Many viewers | Open 5 viewers | 5th gets the "maximum viewers" message |
+| M16 | Long run | Stream for 1 hour | No crash; steady fps; flat memory on PC and phones |

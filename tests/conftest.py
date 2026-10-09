@@ -1,22 +1,18 @@
-import os
+import time
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+import pytest
 
-import pytest  # noqa: E402
-
-from babycue_camera.devtools.test_pattern_server import TestPatternServer  # noqa: E402
+from babycue_server.http_server import RelayServer
 
 
 @pytest.fixture
-def server():
-    srv = TestPatternServer(fps=25).start()
-    yield srv
-    srv.stop()
+def relay():
+    server = RelayServer("127.0.0.1", 0, input_timeout=2.0).start()
+    yield server
+    server.stop()
 
 
 def wait_until(predicate, timeout=5.0, interval=0.02):
-    import time
-
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():

@@ -1,165 +1,73 @@
-# BabyCue Camera
+# BabyCue
 
-Streams a smartphone camera to a Windows PC over the local network and shows it in a Python
-desktop viewer. This is the camera part of **BabyCue**, a local, privacy-first infant-monitoring
-project. The viewer receives video and runs basic image-quality diagnostics. **It does not do
-infant detection yet**, and it never shows invented AI results.
+A local, privacy-first video relay for infant monitoring. One phone films (the **input**), a Python
+**server** on your PC receives the video, can run logic on every frame, and relays it to a second phone
+(the **output**). Nothing leaves your local network. For now the server only passes the video through; it
+does no detection and never shows invented results.
 
 ```
- Phone (IP Webcam app)                 PC (this project)
- ┌──────────────────┐   MJPEG/HTTP     ┌─────────────────────────────────────────────┐
- │ camera → HTTP    │ ───────────────▶ │ stream/   MjpegStream: HTTP + MJPEG parser   │
- │ server :8080     │   local network  │ capture/  StreamWorker thread: decode, fps,  │
- └──────────────────┘   only           │           reconnect, latest-frame slot       │
-                                       │ processing/ ProcessingRunner thread:         │
-                                       │           brightness / dark / blur checks    │
-                                       │ ui/       PySide6 viewer (30 Hz refresh)     │
-                                       └─────────────────────────────────────────────┘
+ Input phone                    PC: BabyCue server (Python)                  Output phone
+ ┌────────────────┐  POST       ┌─────────────────────────────┐   GET        ┌─────────────────┐
+ │ CameraX → JPEG │ ─────────▶  │ /ingest → FramePipeline ──┐  │ ◀─────────  │ /view → ImageView│
+ └────────────────┘  /ingest    │          (your logic here) ▼  │   /view     └─────────────────┘
+   BabyCue app       chunked    │            FrameHub (newest frame only) │    BabyCue app
+   role: Input       HTTP       │ /status  (JSON)                          │    role: Output
+                                └─────────────────────────────┘
 ```
 
-## Quick start (Windows)
+## Quick start
 
-Requirements: Windows 10/11 and **Python 3.11 or newer** from python.org (tick "Add python.exe to PATH").
+Requirements: Python 3.11+, an Android phone or two (Android 7.0+), all on the **same trusted Wi-Fi**.
 
 ```powershell
-git clone https://github.com/R-rawr-R/asdas.git babycue-camera
-cd babycue-camera
 py -3.11 -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-pip install -e .
-babycue-camera
+python -m babycue_server            # prints the address to type into the phones
 ```
 
-You can also run `python -m babycue_camera`. Options:
+1. Allow the server through Windows Firewall when prompted (inbound TCP **8080**, private networks).
+2. Install the Android app on both phones. Build it once (`cd android; .\gradlew.bat :app:assembleDebug`, see
+   [android/README.md](android/README.md)); the server then shares it: open the **install link it prints**
+   (`http://<PC-IP>:8080/install`) in the phone's browser, download, and allow "Install unknown apps" when asked.
+   Use `--apk path\to\app-debug.apk` to share a different file.
+3. **Input phone**: choose *Input*, enter the address the server printed (e.g. `192.168.1.20:8080`), tap Start,
+   allow the camera.
+4. **Output phone**: choose *Output*, enter the same address, tap Start. You see the input phone's video.
 
-```
-babycue-camera --url http://192.168.1.25:8080/video --connect
-babycue-camera --log-level DEBUG
-```
+No phone handy? Run `python -m babycue_server.devtools.fake_input` as a stand-in input and open
+`http://localhost:8080/` in a PC browser to watch the relay.
 
-macOS and Linux work the same way (`python3 -m venv .venv && source .venv/bin/activate`).
+## How it works
 
-### Phone side
-
-Install **IP Webcam** on the Android phone, connect it to the same Wi-Fi, tap **Start server**, and
-enter the URL it shows plus `/video` (e.g. `http://192.168.1.25:8080/video`) in the viewer.
-See [docs/PHONE_SETUP.md](docs/PHONE_SETUP.md) for details, alternative apps and security settings.
-
-### Try it without a phone
-
-A local test server streams a synthetic pattern stamped "SYNTHETIC TEST PATTERN". It is a
-developer tool and is never started by the viewer.
-
-```powershell
-python -m babycue_camera.devtools.test_pattern_server --port 8081
-babycue-camera --url http://127.0.0.1:8081/video --connect
-```
-
-Add `--brightness 0.15` to try the low-light diagnostics and enhancement.
-
-## Using the viewer
-
-- **Stream** field: a full URL, or a bare IP / `ip:port` (which uses port 8080 and `/video` by default).
-  The URL is checked before connecting.
-- **Username / Password**: only needed if login is enabled in the phone app. The password is never saved.
-- **Connect / Disconnect / Reconnect**.
-- **Status, Address, Resolution, Frame rate, Last frame, Frames**: measured from the frames
-  actually received.
-- **Not-live indication**: if no new frame arrives for about 2 s (longer for low-fps streams),
-  the last frame is dimmed and labelled **STALE FEED**. While reconnecting it shows **NOT LIVE —
-  reconnecting**. On disconnect the frame is cleared, never left frozen.
-- **Camera processing**: brightness (0–255), lighting (OK / too dark / very dark), sharpness and
-  blur, and pipeline status. *Infant detection: not implemented* is shown explicitly.
-- **Low-light display enhancement**: gamma + CLAHE applied to the **displayed copy only**, with an
-  "Enhanced display (not night vision)" badge. Diagnostics always use the original frame.
-
-## Architecture
-
-| Module | Responsibility |
+| Piece | Role |
 |---|---|
-| `babycue_camera/config.py` | Parse and validate stream URLs; credentials kept out of `url` and `repr` |
-| `babycue_camera/stream/mjpeg.py` | `MjpegStream`: HTTP connect, auth (Basic, Digest fallback), content-type checks, error mapping, abortable reads; `MjpegParser`: incremental multipart parser (Content-Length, boundary, or JPEG-marker fallback) |
-| `babycue_camera/stream/errors.py` | Error types with user-facing messages and a `retryable` flag |
-| `babycue_camera/capture/worker.py` | `StreamWorker`: background thread, JPEG decode, latest-frame slot (old frames dropped), fps/resolution stats, automatic reconnect with backoff |
-| `babycue_camera/capture/stale.py` | `StaleDetector`: frame-age threshold that adapts to the frame rate |
-| `babycue_camera/processing/base.py` | `FrameProcessor` protocol and `ProcessingPipeline` (read-only frames, failures isolated) |
-| `babycue_camera/processing/runner.py` | `ProcessingRunner`: runs the pipeline on its own thread at ≤5 Hz |
-| `babycue_camera/processing/diagnostics.py` | `ImageQualityProcessor`: brightness, darkness, Laplacian-variance blur |
-| `babycue_camera/processing/enhance.py` | `enhance_low_light`: display-only enhancement, returns a new array |
-| `babycue_camera/ui/` | PySide6 `MainWindow` and `VideoView` |
-| `babycue_camera/devtools/test_pattern_server.py` | Synthetic MJPEG server for tests and demos |
+| `babycue_server/http_server.py` | `RelayServer`: `POST /ingest` (one input at a time, else 409), `GET /view` (up to 4 viewers, else 503), `GET /status`, `GET /` (browser test page) |
+| `babycue_server/hub.py` | `FrameHub`: keeps only the newest frame, so slow viewers skip frames instead of building a delay |
+| `babycue_server/pipeline.py` | `FramePipeline`: the hook where future logic transforms or inspects each JPEG (passthrough today) |
+| `babycue_server/bodyreader.py` | Interruptible socket/chunked-body readers (a vanished phone or server shutdown always frees the thread, also on Windows) |
+| `babycue_server/protocol.py` | The wire contract; mirrored in `android/.../net/WireProtocol.kt` and checked by a test |
+| `babycue_server/processing/` | Image-quality diagnostics and display enhancement, ready to be wired into the pipeline |
+| `android/` | One Kotlin app, two roles: `FramePusher` (input) and `FrameReceiver` (output) |
 
-Threads: capture (network + decode), processing (diagnostics), and the Qt UI thread, which only
-converts and paints the newest frame every 33 ms. Slow processing or painting never builds up a
-backlog. Frames are simply skipped.
+**Wire protocol.** Input → server: `POST /ingest`, chunked body of `[uint32 big-endian length][JPEG]` records.
+Server → output: `GET /view` as `multipart/x-mixed-replace` with a `Content-Length` per part (so a browser can
+open it too).
 
-### Adding a computer-vision module
+### Adding logic
 
-Write a class with a `name` and `process(frame, context) -> ProcessorResult` and add it to the
-pipeline in `MainWindow.connect_stream`. `frame` is the original BGR image as a read-only view. If
-you need to modify it (for example to enhance it before inference), call `frame.copy()` first. That
-way processed images never silently replace the original input.
-
-```python
-from babycue_camera.processing import ProcessorResult
-
-
-class InfantVisibility:
-    name = "infant_visibility"
-
-    def process(self, frame, context):
-        ...  # run a local model here
-        return ProcessorResult(self.name, ok=True, summary="...", values={...})
-```
-
-### Protocol choice: MJPEG over HTTP (WebRTC evaluated)
-
-MJPEG is a series of independent JPEGs over one HTTP response. It's simple to receive, robust
-to packet loss between frames, and widely supported by phone apps. Its costs are high bandwidth
-(roughly 3–10 Mbit/s at 640×480 / 15 fps, more at 720p) and no encryption.
-
-WebRTC (H.264/VP8) would reduce bandwidth several-fold, adapt the bitrate, lower latency, and
-encrypt by default (DTLS-SRTP). But it needs a phone-side WebRTC sender (a custom app, or a web
-page served over HTTPS because browsers only allow camera access in secure contexts), a signalling
-exchange, and a heavier PC stack (`aiortc` + FFmpeg bindings). **Recommendation:** stay with MJPEG
-for the MVP. Consider WebRTC if real-device testing shows Wi-Fi bandwidth or latency problems,
-or if encrypted transport becomes a requirement.
-
-## Connection methods
-
-See [docs/NETWORK.md](docs/NETWORK.md) for full details and troubleshooting.
-
-- **Wi-Fi / local IP**: primary. Works without internet. The same Wi-Fi name does not guarantee
-  the devices can reach each other (AP/client isolation, VPNs).
-- **Direct IP / manual URL**: validated input, clear errors, Reconnect button, automatic retry
-  after drops.
-- **Bluetooth**: investigated and **not implemented**. The bandwidth is far too low for usable
-  video. It could be used later for discovery or control only.
-- **USB**: optional and documented (`adb forward tcp:8080 tcp:8080`), not tested on a device.
+Add a function `(jpeg: bytes) -> bytes` to the pipeline in `babycue_server/__main__.py`
+(`RelayServer(pipeline=FramePipeline([my_stage]))`). A stage that raises is logged and skipped, so it can never
+stop the video. Stages run on the ingest thread; keep them fast or hand work to a worker thread.
 
 ## Privacy and security
 
-- Video goes only between the phone and the PC. There are no cloud services, analytics or
-  telemetry, and the system/environment proxy settings are ignored for the stream connection.
-- Nothing is recorded. Frames are never written to disk. Only the latest frame is held in memory,
-  and it is released on disconnect.
-- Logs contain connection events and errors, never image data or passwords. The URL stored in
-  settings has no password.
-- **The stream is unencrypted HTTP.** Other devices on the same network could view it, and HTTP
-  Basic credentials are visible to anyone capturing traffic. Use a trusted WPA2/WPA3 network,
-  enable the phone app's login, and never expose the phone's port to the internet. The viewer
-  warns when the target is not a private-network address. Do not treat the local network as
-  automatically trusted.
-
-## Low-light limitations
-
-- Diagnostics are heuristics (mean grey level < 50 = too dark, < 20 = very dark; Laplacian
-  variance < 100 at 320 px width = blurry). They were tuned on synthetic images and should be
-  calibrated on real nursery footage. Blur is not judged on dark or featureless frames.
-- Software enhancement cannot recover detail the sensor never captured, and it amplifies noise.
-  Longer exposure on the phone increases motion blur.
-- Ordinary phone cameras usually filter out infrared, so a brightened image is **not** night vision.
+- Video goes only phone → your PC → phone. No cloud, analytics, or telemetry. Nothing is recorded or written to disk.
+- **The stream is unencrypted HTTP with no login.** Anyone on the same network who knows the address could send
+  video to the server or watch it. Use a trusted WPA2/WPA3 network, never public Wi-Fi, and never forward the port
+  on your router. Android is told to allow plain HTTP (`usesCleartextTraffic`) for this prototype.
+- Streaming is tied to the app being in the foreground on both phones: leave the app or lock the phone and it
+  stops (no foreground service yet).
 
 ## Testing
 
@@ -167,44 +75,18 @@ See [docs/NETWORK.md](docs/NETWORK.md) for full details and troubleshooting.
 pip install -r requirements-dev.txt
 pytest
 ruff check .
+cd android; .\gradlew.bat :app:testDebugUnitTest :app:assembleDebug   # needs JDK 17 and the Android SDK
 ```
 
-The automated tests (`tests/`) run against the local synthetic MJPEG server on `127.0.0.1` and
-need no phone and no internet. They cover:
+Python tests use real localhost sockets (hub, ingest protocol, viewers, relay end to end, pipeline, wire-contract
+drift guard). Android JVM tests cover the pusher and receiver against local fake servers, the part parser,
+reconnect/backoff, address parsing and screen logic. **Not yet verified:** anything on real phones or a real
+network; see [docs/MANUAL_TESTS.md](docs/MANUAL_TESTS.md).
 
-- URL validation
-- MJPEG parsing edge cases
-- connecting and reporting resolution and fps
-- refused, unreachable, 404, snapshot and HTML endpoints
-- malformed frames
-- authentication
-- reconnect after a dropped connection and after the server was temporarily down
-- stale-feed detection and recovery
-- releasing the connection on stop (also when the source is frozen)
-- checking the app connects only to the stream host
-- brightness, darkness and blur detection
-- enhancement never modifying the original frame
-- processor isolation
-- the UI: connect, live stats, stale overlay, disconnect, reconnect, failed connection, password not saved, event-loop responsiveness at 720p
+## Status and ideas
 
-Real-phone checks are in [docs/MANUAL_TESTS.md](docs/MANUAL_TESTS.md).
+Done: relay of one input to up to four output viewers, reconnection on both phones, passthrough pipeline.
+Next: server-side detection as pipeline stages, several named inputs, optional login/HTTPS, a foreground service so
+streaming survives a locked screen.
 
-## Status
-
-**Verified (automated, on Linux with the synthetic server):** everything in the test list above.
-
-**Not yet verified:**
-
-- with a real phone or IP Webcam
-- on Windows
-- USB through `adb forward`
-- over a real Wi-Fi network without internet
-- latency and long-running stability
-
-**Remaining work / ideas:**
-
-- Run the manual test plan on real devices and tune the diagnostic thresholds.
-- Auto-discovery of the phone (mDNS, or BLE carrying the phone's address).
-- Optional HTTPS with certificate pinning for phone apps that support it.
-- Infant visibility detection and tracking as `FrameProcessor` modules.
-- WebRTC/H.264 if bandwidth or latency requires it.
+See [docs/NETWORK.md](docs/NETWORK.md) for firewall and Wi-Fi troubleshooting.
