@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">BabyCue Camera</string>
+    <string name="subtitle">Phone camera source for the BabyCue desktop viewer</string>
+    <string name="start">Start</string>
+    <string name="stop">Stop</string>
+    <string name="open_settings">Open app settings</string>
+
+    <string name="status_idle_permission_needed">Stopped. Tap Start; Android will ask for camera permission.</string>
+    <string name="status_idle_ready">Stopped. Camera permission granted.</string>
+    <string name="status_started_capturing">Capturing from the rear camera.</string>
+    <string name="server_stopped">Server: stopped</string>
+    <string name="server_starting">Server: starting…</string>
+    <string name="server_failed">Server error: %1$s</string>
+    <string name="server_running">Server: running\nStream URL: %1$s\nConnected viewers: %2$d</string>
+    <string name="server_running_no_address">Server: running on port %1$d, but this phone has no Wi-Fi/LAN address. Connect to the same Wi-Fi network as the PC.</string>
+    <string name="server_security_note">Unencrypted HTTP, no password: use on a trusted Wi-Fi network only.</string>
+    <string name="status_camera_error">Camera error: %1$s</string>
+    <string name="stats_waiting">Waiting for the first frame…</string>
+    <string name="stats_format">Frames: %1$d · %2$.1f fps · %3$d×%4$d · last JPEG %5$.0f KB</string>
+    <string name="status_denied">Camera permission was denied. The app cannot capture video without it. Tap Start to be asked again.</string>
+    <string name="status_denied_permanent">Camera permission is blocked. Enable it for BabyCue Camera in the app settings.</string>
+</resources>

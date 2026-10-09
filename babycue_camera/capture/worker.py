@@ -18,6 +18,9 @@ from babycue_camera.stream import MjpegStream, StreamError
 
 log = logging.getLogger(__name__)
 
+#: Undecodable frames received before any good one that trigger a one-time explanatory message.
+MALFORMED_HINT_AFTER = 5
+
 
 class ConnectionState(StrEnum):
     IDLE = "idle"
@@ -226,8 +229,18 @@ class StreamWorker:
             return False
         image = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
         if image is None or image.size == 0:
+            hint = False
             with self._lock:
                 self._malformed += 1
+                # Data is arriving but nothing decodes: say so once instead of staying on "Connecting…".
+                if self._malformed == MALFORMED_HINT_AFTER and self._seq == 0 and not self._stop.is_set():
+                    hint = True
+                    self._message = (
+                        "Receiving data, but the frames cannot be decoded (corrupt or non-JPEG data). "
+                        "Check that the phone app is streaming MJPEG."
+                    )
+            if hint:
+                log.warning("Received %d undecodable frames before any valid one", MALFORMED_HINT_AFTER)
             return False
         image.flags.writeable = False
         now = self._clock()
