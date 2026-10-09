@@ -8,12 +8,17 @@ enum class CameraPermission { NOT_REQUESTED, GRANTED, DENIED, DENIED_PERMANENTLY
 
 enum class CaptureState { STOPPED, STARTED }
 
+/** INPUT films and sends to the server; OUTPUT shows what the server relays. */
+enum class Role { INPUT, OUTPUT }
+
 enum class StatusMessage {
     IDLE_PERMISSION_NEEDED,
     IDLE_READY,
     STARTED_CAPTURING,
     DENIED,
     DENIED_PERMANENTLY,
+    OUTPUT_IDLE,
+    OUTPUT_WATCHING,
 }
 
 data class ScreenModel(
@@ -27,6 +32,10 @@ data class ScreenModel(
 fun effectiveCapture(permission: CameraPermission, capture: CaptureState): CaptureState =
     if (permission == CameraPermission.GRANTED) capture else CaptureState.STOPPED
 
+/** Whether streaming is effectively on: the output role needs no camera permission. */
+fun effectiveRunning(role: Role, permission: CameraPermission, running: CaptureState): CaptureState =
+    if (role == Role.OUTPUT) running else effectiveCapture(permission, running)
+
 /**
  * Re-sync the remembered permission with the system's answer (e.g. after returning from settings).
  * A permission that was granted and later revoked goes back to "not requested".
@@ -37,7 +46,14 @@ fun reconcilePermission(isGranted: Boolean, current: CameraPermission): CameraPe
     else -> current
 }
 
-fun screenModel(permission: CameraPermission, capture: CaptureState): ScreenModel {
+fun screenModel(role: Role, permission: CameraPermission, capture: CaptureState): ScreenModel {
+    if (role == Role.OUTPUT) {
+        return if (capture == CaptureState.STARTED) {
+            ScreenModel(StatusMessage.OUTPUT_WATCHING, startEnabled = false, stopEnabled = true, showOpenSettings = false)
+        } else {
+            ScreenModel(StatusMessage.OUTPUT_IDLE, startEnabled = true, stopEnabled = false, showOpenSettings = false)
+        }
+    }
     if (effectiveCapture(permission, capture) == CaptureState.STARTED) {
         return ScreenModel(StatusMessage.STARTED_CAPTURING, startEnabled = false, stopEnabled = true, showOpenSettings = false)
     }

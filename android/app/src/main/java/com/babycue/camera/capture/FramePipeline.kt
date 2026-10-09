@@ -38,6 +38,6 @@ class FramePipeline(
     }
 
     companion object {
-        const val DEFAULT_JPEG_QUALITY = 80
+        const val DEFAULT_JPEG_QUALITY = 50
     }
 }

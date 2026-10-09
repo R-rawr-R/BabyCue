@@ -16,31 +16,74 @@
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="24dp"
+        android:layout_marginBottom="16dp"
         android:text="@string/subtitle" />
+
+    <RadioGroup
+        android:id="@+id/roleGroup"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <RadioButton
+            android:id="@+id/radioInput"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/role_input" />
+
+        <RadioButton
+            android:id="@+id/radioOutput"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/role_output" />
+    </RadioGroup>
+
+    <EditText
+        android:id="@+id/serverEdit"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:autofillHints="@null"
+        android:hint="@string/server_hint"
+        android:imeOptions="actionDone"
+        android:importantForAutofill="no"
+        android:inputType="textUri"
+        android:singleLine="true" />
 
     <TextView
         android:id="@+id/statusText"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="24dp"
+        android:layout_marginTop="16dp"
+        android:layout_marginBottom="8dp"
         android:textSize="16sp" />
+
+    <TextView
+        android:id="@+id/linkText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"
+        android:textSize="14sp"
+        android:visibility="gone" />
 
     <TextView
         android:id="@+id/statsText"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="24dp"
+        android:layout_marginBottom="8dp"
         android:textSize="14sp"
         android:visibility="gone" />
 
-    <TextView
-        android:id="@+id/serverText"
+    <ImageView
+        android:id="@+id/videoView"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginBottom="24dp"
-        android:textIsSelectable="true"
-        android:textSize="14sp"
+        android:layout_height="0dp"
+        android:layout_marginBottom="8dp"
+        android:layout_weight="1"
+        android:background="#000000"
+        android:contentDescription="@string/video_description"
+        android:scaleType="fitCenter"
         android:visibility="gone" />
 
     <Button

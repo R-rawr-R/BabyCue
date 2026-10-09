@@ -191,7 +191,10 @@ class CameraCapture(
     }
 
     private companion object {
-        /** Landscape sensor size; CameraX picks the closest supported size. */
-        val TARGET_SIZE = Size(1280, 720)
+        /**
+         * Landscape sensor size; CameraX picks the closest supported size. Kept small because every
+         * frame crosses the Wi-Fi twice (phone -> server -> viewer) and phone CPUs encode the JPEG.
+         */
+        val TARGET_SIZE = Size(640, 480)
     }
 }
