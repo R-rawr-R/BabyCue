@@ -1,3 +1,4 @@
+import sys
 import time
 
 import pytest
@@ -116,3 +117,15 @@ def test_ui_stays_responsive_while_streaming(window, qtbot, server):
     assert window._worker.stats().state is ConnectionState.STREAMING
     # Event-loop stalls stay well below what a user would perceive as a hang.
     assert worst < 250, f"event loop stalled for {worst} ms"
+
+
+def test_streaming_ui_does_not_leak_none_references(window, qtbot, server):
+    # PySide6 6.12.0 dropped a None reference per QLabel.setText, crashing Python 3.11 with
+    # "none_dealloc" after a few minutes of streaming.
+    window.url_edit.setText(server.url)
+    assert window.connect_stream()
+    qtbot.waitUntil(lambda: window.processing_label.text().startswith("Image-quality"), timeout=5000)
+    before = sys.getrefcount(None)
+    for _ in range(500):
+        window._tick()
+    assert sys.getrefcount(None) - before > -50
