@@ -165,6 +165,15 @@ input, textarea { -webkit-user-select: text; user-select: text; }
 .live-head h2 { flex: 1; font-size: 26px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conn { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 700; }
 .conn .dot { width: 10px; height: 10px; border-radius: 50%; background: currentColor; animation: bcDot 2s ease-out infinite; }
+.btn.leave {
+  width: 48px; min-height: 48px; padding: 0; flex: none; display: grid; place-items: center;
+  background: var(--surface); color: var(--text);
+}
+.bg-alarms { display: grid; gap: 12px; padding: 16px; border-radius: 24px; background: var(--surface); animation: bcUp 0.45s both; }
+.bg-alarms .top { display: flex; gap: 14px; align-items: center; }
+.bg-alarms .ic { width: 44px; height: 44px; flex: none; border-radius: 50%; display: grid; place-items: center; background: var(--accent-700); color: var(--on-accent); }
+.bg-alarms .t { font-weight: 800; font-size: 17px; line-height: 1.2; }
+.bg-alarms .s { font-size: 14px; color: var(--neutral-700); margin-top: 2px; }
 .video {
   position: relative; height: 230px; flex: none; border-radius: 28px; background: var(--video-bg); overflow: hidden;
 }

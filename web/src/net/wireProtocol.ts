@@ -15,4 +15,12 @@ export const CA_PATH = '/ca.crt';
 export const BABY_PATH = '/baby';
 /** GET ?limit=N: { detections: [...] }, newest first, each with its local date and time. */
 export const DETECTIONS_PATH = '/detections';
+/** GET: { publicKey } for pushManager.subscribe; 503 when background alarms are off on the server. */
+export const PUSH_KEY_PATH = '/push/key';
+/** POST a PushSubscription (its toJSON()) to get background alarms on this phone. */
+export const PUSH_SUBSCRIBE_PATH = '/push/subscribe';
+/** POST { endpoint } to stop them. */
+export const PUSH_UNSUBSCRIBE_PATH = '/push/unsubscribe';
+/** POST { endpoint }: send a test alarm to that one phone (it must have signed up). */
+export const PUSH_TEST_PATH = '/push/test';
 export const MAX_FRAME_BYTES = 8 * 1024 * 1024;

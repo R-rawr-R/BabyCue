@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { BabyScreen } from './screens/BabyScreen';
 import { LiveScreen } from './screens/LiveScreen';
 import { SetupScreen } from './screens/SetupScreen';
+import { unlockAudio } from './alarm';
 import { babyName, loadPrefs, savePrefs, type Prefs } from './storage';
 
 type Route = { screen: 'setup' } | { screen: 'baby' | 'live'; preview: boolean };
@@ -12,6 +13,12 @@ export default function App() {
     if (import.meta.env.DEV) {
       if (location.hash === '#preview') return { screen: 'live', preview: true };
       if (location.hash === '#baby') return { screen: 'baby', preview: false };
+    }
+    // Opened from an alarm notification: go straight to the live view on a phone that was watching before.
+    const saved = loadPrefs();
+    if (new URLSearchParams(location.search).get('open') === 'live' && saved.role === 'parent' && saved.name) {
+      history.replaceState(null, '', '/');
+      return { screen: 'live', preview: false };
     }
     return { screen: 'setup' };
   });
@@ -41,6 +48,7 @@ export default function App() {
           <SetupScreen
             initial={prefs}
             onConnect={(next) => {
+              unlockAudio(); // still inside the Connect tap, so alarms may sound later
               setPrefs(next);
               savePrefs(next);
               setRoute({ screen: next.role === 'baby' ? 'baby' : 'live', preview: false });

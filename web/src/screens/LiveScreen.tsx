@@ -1,5 +1,7 @@
-import { Check, OctagonAlert, TriangleAlert } from 'lucide-react';
+import { Check, LogOut, OctagonAlert, TriangleAlert } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { startAlarm, stopAlarm, testAlarm, unlockAudio } from '../alarm';
+import { BackgroundAlarms } from '../components/BackgroundAlarms';
 import { Button } from '../components/Button';
 import { HazardCard } from '../components/HazardCard';
 import { PostureCard } from '../components/PostureCard';
@@ -88,10 +90,14 @@ export function LiveScreen({ name, preview, onLeave }: { name: string; preview: 
       const added = diffSamples(before, shown, new Date());
       if (added.length > 0) setEvents((e) => addEvents(e, added));
     }
+    // Losing the PC or the baby camera means the parent is no longer watching: say so out loud.
+    const lostPc = shown === null && before !== null && before !== undefined;
+    const lostCamera = !!before && !!shown && before.inputConnected && !shown.inputConnected;
     if (shown === null && before !== null) haptic('lost');
     else if (shown?.alert && shown.alert.title !== before?.alert?.title) {
       haptic(shown.alert.level === 'crit' ? 'critical' : 'warn');
     }
+    if (!preview && (lostPc || lostCamera)) startAlarm('lost');
   }, [shown, preview]);
 
   const alert = sample?.alert ?? null;
@@ -101,6 +107,36 @@ export function LiveScreen({ name, preview, onLeave }: { name: string; preview: 
     setQuiet((q) => ({ ...q, [alert.title]: until }));
     if (until !== Infinity) setTimeout(() => tick((n) => n + 1), until - Date.now() + 50);
   };
+
+  // The alarm sound: a critical alert rings until it is acknowledged, snoozed or over; a heads-up chimes once.
+  const alarmLevel = alert && !hidden && !preview ? alert.level : null;
+  useEffect(() => {
+    if (alarmLevel) startAlarm(alarmLevel);
+    else stopAlarm();
+  }, [alarmLevel, alert?.title]);
+  useEffect(() => stopAlarm, []);
+  // An alarm the push message started (below) stops once the status shows the alert is over.
+  useEffect(() => {
+    if (!alarmLevel && shown !== undefined) stopAlarm({ keepTest: true });
+  }, [alarmLevel, shown]);
+  // A push alarm reached the phone while this page is still running (perhaps hidden): sound it now, without
+  // waiting for the next status check, which a phone may hold back while the app is in the background.
+  useEffect(() => {
+    if (preview || !('serviceWorker' in navigator)) return;
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { type?: unknown; level?: unknown; test?: unknown } | null;
+      if (data?.type !== 'babycue-alarm') return;
+      if (data.test) testAlarm();
+      else startAlarm(data.level === 'crit' ? 'crit' : 'warn');
+    };
+    navigator.serviceWorker.addEventListener('message', onMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', onMessage);
+  }, [preview]);
+  // Browsers only allow sound after a touch; any tap on this screen keeps it allowed.
+  useEffect(() => {
+    document.addEventListener('pointerdown', unlockAudio);
+    return () => document.removeEventListener('pointerdown', unlockAudio);
+  }, []);
 
   if (alert && alert.level === 'crit' && !hidden) {
     return (
@@ -127,6 +163,9 @@ export function LiveScreen({ name, preview, onLeave }: { name: string; preview: 
                   <span className="dot" />
                   {connecting ? 'Connecting' : view.connection}
                 </span>
+                <Button className="leave" haptic="leave" aria-label="Disconnect" title="Disconnect" onClick={onLeave}>
+                  <LogOut size={20} strokeWidth={2.75} aria-hidden />
+                </Button>
               </div>
               <VideoPanel
                 label={view.videoLabel}
@@ -134,6 +173,7 @@ export function LiveScreen({ name, preview, onLeave }: { name: string; preview: 
                 streaming={preview ? false : sample?.inputConnected === true}
               />
               <StatusCard tone={view.tone} title={view.title} sub={view.sub} />
+              {preview ? null : <BackgroundAlarms />}
               {sample?.inputConnected && sample.detection ? (
                 <div className="safe-sleep">
                   <PostureCard posture={sample.detection.posture} />
@@ -204,9 +244,6 @@ export function LiveScreen({ name, preview, onLeave }: { name: string; preview: 
                   </div>
                 );
               })}
-              <Button className="quiet small" haptic="leave" style={{ marginTop: 12 }} onClick={onLeave}>
-                Disconnect
-              </Button>
             </div>
           </div>
         )}

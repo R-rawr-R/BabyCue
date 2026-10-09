@@ -8,7 +8,7 @@ const relay = { target: 'https://localhost:8080', secure: false, changeOrigin: t
 export default defineConfig({
   plugins: [react()],
   server: {
-    proxy: { '/status': relay, '/view': relay, '/frame': relay, '/ca.crt': relay, '/baby': relay, '/detections': relay },
+    proxy: { '/status': relay, '/view': relay, '/frame': relay, '/ca.crt': relay, '/baby': relay, '/detections': relay, '/push': relay },
   },
   test: { include: ['src/**/*.test.ts'] },
 });

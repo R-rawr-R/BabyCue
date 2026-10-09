@@ -33,6 +33,10 @@ def typescript_constants() -> dict[str, object]:
         ("CA_PATH", protocol.CA_PATH),
         ("BABY_PATH", protocol.BABY_PATH),
         ("DETECTIONS_PATH", protocol.DETECTIONS_PATH),
+        ("PUSH_KEY_PATH", protocol.PUSH_KEY_PATH),
+        ("PUSH_SUBSCRIBE_PATH", protocol.PUSH_SUBSCRIBE_PATH),
+        ("PUSH_UNSUBSCRIBE_PATH", protocol.PUSH_UNSUBSCRIBE_PATH),
+        ("PUSH_TEST_PATH", protocol.PUSH_TEST_PATH),
         ("MAX_FRAME_BYTES", protocol.MAX_FRAME_BYTES),
     ],
 )
@@ -50,5 +54,9 @@ def test_every_typescript_constant_is_covered():
         "CA_PATH",
         "BABY_PATH",
         "DETECTIONS_PATH",
+        "PUSH_KEY_PATH",
+        "PUSH_SUBSCRIBE_PATH",
+        "PUSH_UNSUBSCRIBE_PATH",
+        "PUSH_TEST_PATH",
         "MAX_FRAME_BYTES",
     }

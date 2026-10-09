@@ -1,4 +1,5 @@
-"""The server's own records, in one SQLite file: the baby's name and a log of every detection event.
+"""The server's own records, in one SQLite file: the baby's name, a log of every detection event, and the
+phones that asked for background alarms.
 
 SQLite comes with Python, so this needs no extra package. One connection is shared by the HTTP threads and the
 detection thread; a lock keeps their writes apart.
@@ -6,6 +7,7 @@ detection thread; a lock keeps their writes apart.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from datetime import datetime
@@ -33,6 +35,11 @@ CREATE TABLE IF NOT EXISTS detection (
     score  REAL               -- the model's confidence, when it gives one
 );
 CREATE INDEX IF NOT EXISTS detection_at ON detection (at);
+CREATE TABLE IF NOT EXISTS push_subscription (
+    endpoint   TEXT PRIMARY KEY,  -- the phone's push address (unique per phone and browser)
+    data       TEXT NOT NULL,     -- the whole PushSubscription JSON, keys included
+    created_at TEXT NOT NULL
+);
 """
 
 
@@ -105,3 +112,30 @@ class Database:
                 (limit,),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    # -- background alarms ----------------------------------------------------------------------
+
+    def add_push_subscription(self, subscription: dict) -> None:
+        """Remember a phone's ``PushSubscription``. Raises ``ValueError`` if it is not one."""
+        endpoint = subscription.get("endpoint")
+        keys = subscription.get("keys")
+        if not (isinstance(endpoint, str) and endpoint.startswith("https://") and len(endpoint) <= 2048):
+            raise ValueError("The subscription has no https endpoint")
+        if not (isinstance(keys, dict) and isinstance(keys.get("p256dh"), str) and isinstance(keys.get("auth"), str)):
+            raise ValueError("The subscription has no encryption keys")
+        data = json.dumps({"endpoint": endpoint, "keys": {"p256dh": keys["p256dh"], "auth": keys["auth"]}})
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO push_subscription (endpoint, data, created_at) VALUES (?, ?, ?) "
+                "ON CONFLICT (endpoint) DO UPDATE SET data = excluded.data",
+                (endpoint, data, _now()),
+            )
+
+    def remove_push_subscription(self, endpoint: str) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM push_subscription WHERE endpoint = ?", (endpoint,))
+
+    def push_subscriptions(self) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute("SELECT data FROM push_subscription").fetchall()
+        return [json.loads(row["data"]) for row in rows]

@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 from babycue_server.certs import DEFAULT_DIR, ensure_certs
+from babycue_server import push
 from babycue_server.db import Database
 from babycue_server.detection import (
     DEFAULT_MODELS_DIR,
@@ -118,6 +119,14 @@ def main(argv: list[str] | None = None) -> int:
     db = Database(args.db)
     baby = db.baby()
     print(f"Database: {args.db} ({'baby: ' + baby['name'] if baby else 'no baby yet: the first phone to connect asks for the name'})")
+    notifier = None
+    if push.available():
+        notifier = push.PushNotifier(db, args.cert_dir / "vapid.pem")
+        phones = len(db.push_subscriptions())
+        print(f"Background alarms: on ({phones} phone{'' if phones == 1 else 's'} signed up). They need internet on the PC;")
+        print("  the alert is end-to-end encrypted on its way through Google/Apple's push service. Video never leaves.")
+    else:
+        print("Background alarms: off (pip install pywebpush). Alarms then sound only while the app is open.")
 
     addresses = lan_addresses()
     context = None
@@ -131,12 +140,12 @@ def main(argv: list[str] | None = None) -> int:
     scheme = "http" if args.http else "https"
     try:
         server = RelayServer(
-            args.host, args.port, web_root=args.web, ca_path=ca_path, ssl_context=context, detector=detector, db=db
+            args.host, args.port, web_root=args.web, ca_path=ca_path, ssl_context=context, detector=detector, db=db, push=notifier
         ).start()
     except OSError as exc:
         print(f"Cannot listen on {args.host}:{args.port}: {exc}")
         return 1
-    print("BabyCue is running. Nothing leaves your home network. Use a trusted Wi-Fi only.")
+    print("BabyCue is running. Video never leaves your home network. Use a trusted Wi-Fi only.")
     if detector is not None:
         print("  Safe-sleep alerts are on: sleep position and toys in the crib. They support, never replace,")
         print("  safe-sleep practice: baby on their back, in a bare crib.")

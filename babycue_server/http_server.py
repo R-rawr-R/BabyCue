@@ -24,6 +24,10 @@ from babycue_server.protocol import (
     BABY_PATH,
     CA_PATH,
     DETECTIONS_PATH,
+    PUSH_KEY_PATH,
+    PUSH_SUBSCRIBE_PATH,
+    PUSH_TEST_PATH,
+    PUSH_UNSUBSCRIBE_PATH,
     DEFAULT_PORT,
     FRAME_LEASE_S,
     FRAME_PATH,
@@ -43,7 +47,8 @@ from babycue_server.protocol import (
 )
 
 if TYPE_CHECKING:
-    from babycue_server.detection.worker import DetectionWorker
+    from babycue_server.detection.worker import DetectionEvent, DetectionWorker
+    from babycue_server.push import PushNotifier
 
 log = logging.getLogger(__name__)
 
@@ -90,6 +95,7 @@ class RelayServer:
         ssl_context: ssl.SSLContext | None = None,
         detector: DetectionWorker | None = None,
         db: Database | None = None,
+        push: PushNotifier | None = None,
     ):
         self.host = host
         self.port = port
@@ -99,10 +105,12 @@ class RelayServer:
         self.detector = detector
         #: The baby's name and the detection log. Without a file it lives in memory and is lost on restart.
         self.db = db or Database(":memory:")
+        #: Background alarms (Web Push); ``None`` when the server runs without them.
+        self.push = push
         if detector is not None:
             self.pipeline = FramePipeline([*self.pipeline.stages, detector.submit])
             self.hub.on_input_released = detector.reset
-            detector.on_event = lambda event: self.db.log_detection(**event)
+            detector.on_event = self._on_detection
         self.input_timeout = input_timeout
         #: The built website (``web/dist``) served at ``/``; without it a bare test page is shown.
         self.web_root = Path(web_root).resolve() if web_root else None
@@ -142,6 +150,12 @@ class RelayServer:
 
     def __exit__(self, *exc) -> None:
         self.stop()
+
+    def _on_detection(self, event: DetectionEvent) -> None:
+        """Log every detection; a new alert also wakes the parent phones that asked for background alarms."""
+        self.db.log_detection(**event)
+        if event["kind"] == "alert" and self.push is not None:
+            self.push.notify(event["label"], event.get("detail", ""), event.get("level") or "warn")
 
     @property
     def stopping(self) -> bool:
@@ -238,29 +252,43 @@ def _make_handler(owner: RelayServer) -> type[BaseHTTPRequestHandler]:
                 except ValueError:
                     limit = 100
                 self._json(200, {"detections": owner.db.detections(limit)})
+            elif path == PUSH_KEY_PATH:
+                if owner.push is None:
+                    self._json(503, {"error": "Background alarms are off on the home PC"})
+                else:
+                    self._json(200, {"publicKey": owner.push.public_key})
             else:
                 self._static(path)
 
         def _json(self, status: int, value: object) -> None:
             self._send(status, json.dumps(value).encode(), "application/json", Cache_Control="no-cache")
 
-        def _name_baby(self) -> None:
+        def _read_json(self, max_bytes: int = 4096) -> object:
+            """The request's JSON body, or ``None`` after an error reply (or a vanished client)."""
             try:
                 length = int(self.headers.get("Content-Length", ""))
             except ValueError:
                 self._json(411, {"error": "Content-Length required"})
-                return
-            if not 0 < length <= 1024:
-                self._json(413 if length > 0 else 400, {"error": 'Send {"name": "..."}'})
-                return
+                return None
+            if not 0 < length <= max_bytes:
+                self._json(413 if length > 0 else 400, {"error": "Send a JSON body"})
+                return None
             try:
                 body = read_exact(SocketSource(self.connection, idle_timeout=owner.input_timeout), length)
             except (EOFError, IdleTimeout, OSError):
-                return
+                self.close_connection = True
+                return None
             try:
-                name = json.loads(body)["name"]
-            except (ValueError, KeyError, TypeError):
-                name = None
+                return json.loads(body)
+            except ValueError:
+                self._json(400, {"error": "The body is not JSON"})
+                return None
+
+        def _name_baby(self) -> None:
+            body = self._read_json(1024)
+            if body is None:
+                return
+            name = body.get("name") if isinstance(body, dict) else None
             if not isinstance(name, str):
                 self._json(400, {"error": 'Send {"name": "..."}'})
                 return
@@ -271,6 +299,27 @@ def _make_handler(owner: RelayServer) -> type[BaseHTTPRequestHandler]:
                 return
             log.info("Baby named %r", baby["name"])
             self._json(200, {"baby": baby})
+
+        def _push_subscription(self, subscribe: bool) -> None:
+            if owner.push is None:
+                self._json(503, {"error": "Background alarms are off on the home PC"})
+                return
+            body = self._read_json()
+            if body is None:
+                return
+            if not isinstance(body, dict):
+                self._json(400, {"error": "Send a push subscription"})
+                return
+            if subscribe:
+                try:
+                    owner.db.add_push_subscription(body)
+                except ValueError as exc:
+                    self._json(400, {"error": str(exc)})
+                    return
+                log.info("A phone turned on background alarms (%d now)", len(owner.db.push_subscriptions()))
+            elif isinstance(body.get("endpoint"), str):
+                owner.db.remove_push_subscription(body["endpoint"])
+            self._json(200, {"ok": True})
 
         def _send_ca(self) -> None:
             ca = owner.ca_path
@@ -352,6 +401,25 @@ def _make_handler(owner: RelayServer) -> type[BaseHTTPRequestHandler]:
                 return
             if path == BABY_PATH:
                 self._name_baby()
+                return
+            if path in (PUSH_SUBSCRIBE_PATH, PUSH_UNSUBSCRIBE_PATH):
+                self._push_subscription(subscribe=path == PUSH_SUBSCRIBE_PATH)
+                return
+            if path == PUSH_TEST_PATH:
+                if owner.push is None:
+                    self._json(503, {"error": "Background alarms are off on the home PC"})
+                    return
+                body = self._read_json()
+                if body is None:
+                    return
+                endpoint = body.get("endpoint") if isinstance(body, dict) else None
+                if endpoint not in {s["endpoint"] for s in owner.db.push_subscriptions()}:
+                    self._json(404, {"error": "This phone has not turned on background alarms"})
+                    return
+                owner.push.notify(
+                    "Test alarm", "This is how a BabyCue alarm arrives on this phone.", "crit", test=True, only=endpoint
+                )
+                self._json(200, {"ok": True})
                 return
             if path != INGEST_PATH:
                 self._send(404, b"Not found\n")

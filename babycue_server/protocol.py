@@ -22,6 +22,14 @@ CA_PATH = "/ca.crt"
 BABY_PATH = "/baby"
 #: GET ``?limit=N``: ``{"detections": [...]}``, newest first, each with its local date and time.
 DETECTIONS_PATH = "/detections"
+#: GET: ``{"publicKey": "..."}`` for ``pushManager.subscribe``; 503 when background alarms are off on the server.
+PUSH_KEY_PATH = "/push/key"
+#: POST a ``PushSubscription`` (its ``toJSON()``) to get background alarms on that phone.
+PUSH_SUBSCRIBE_PATH = "/push/subscribe"
+#: POST ``{"endpoint": "..."}`` to stop them.
+PUSH_UNSUBSCRIBE_PATH = "/push/unsubscribe"
+#: POST ``{"endpoint": "..."}``: send a test alarm to that one phone (it must have signed up).
+PUSH_TEST_PATH = "/push/test"
 BOUNDARY = "babycueframe"
 MAX_FRAME_BYTES = 8 * 1024 * 1024
 MAX_VIEWERS = 4

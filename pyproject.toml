@@ -12,6 +12,7 @@ dependencies = [
     "opencv-python-headless>=4.8",
     "numpy>=1.26",
     "cryptography>=42",
+    "pywebpush>=2.0",
 ]
 
 [project.optional-dependencies]

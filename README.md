@@ -67,6 +67,12 @@ FiDIP code is vendored in `babycue_server/detection/fidip/`. Nothing outside thi
   `pip install --force-reinstall --no-deps torch torchvision --index-url https://download.pytorch.org/whl/cu126`.
   At startup the server prints the device it loaded the models on, and warns when that is the CPU. FiDIP and YOLO
   run on the GPU; MediaPipe's Python package has no GPU support on Windows, so its small pose model stays on the CPU.
+- Alarms: while the parent app is open, an alert sounds an alarm (critical alerts repeat until acknowledged or
+  snoozed). With the app in the background or closed, the PC sends a Web Push notification instead, which uses the
+  phone's notification sound and vibration. Each parent phone taps **Turn on background alarms** once. This needs:
+  internet on the PC and the phone (pushes go through Google's or Apple's push service, end-to-end encrypted;
+  video never does), the home PC's certificate installed on the phone, and on iPhone BabyCue added to the Home
+  Screen (iOS 16.4+). The signing key is `~/.babycue/vapid.pem`; signed-up phones are kept in the database.
 - Flags:
   - `--no-detect` turns detection off.
   - `--detect` refuses to start without detection.
