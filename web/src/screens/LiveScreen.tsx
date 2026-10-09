@@ -8,7 +8,9 @@ import { VideoPanel } from '../components/VideoPanel';
 import { useShake, useWakeLock } from '../device';
 import { haptic } from '../haptics';
 import { addEvents, diffSamples, formatTime, type EventKind, type HistoryEvent } from '../history';
+import { useDetectionLog } from '../hooks/useDetectionLog';
 import { useRelayStatus } from '../hooks/useRelayStatus';
+import { describeDetection, formatLogTime } from '../net/database';
 import { liveView, type Detection, type RelayStatus, type Sample } from '../net/relayStatus';
 import { CriticalScreen } from './CriticalScreen';
 
@@ -67,6 +69,7 @@ export function LiveScreen({ name, preview, onLeave }: { name: string; preview: 
   const root = useRef<HTMLDivElement>(null);
 
   const polled = useRelayStatus(!preview);
+  const detectionLog = useDetectionLog(tab === 'history' && !preview);
   const shown: Sample | undefined = preview ? PREVIEW.find((p) => p.key === previewKey)?.sample : polled;
   const sample: Sample = shown === undefined ? null : shown;
   const view = useMemo(() => liveView(name, sample), [name, sample]);
@@ -175,6 +178,28 @@ export function LiveScreen({ name, preview, onLeave }: { name: string; preview: 
                     <div>
                       <div className="t">{e.title}</div>
                       <div className="time">{formatTime(e.at)}</div>
+                    </div>
+                  </div>
+                );
+              })}
+              <h2 style={{ marginTop: 24 }}>Detection log</h2>
+              <p className="empty">Every detection, saved on the home PC.</p>
+              {detectionLog.failed ? <p className="empty">Can't load the log from the home PC right now.</p> : null}
+              {detectionLog.entries?.length === 0 ? <p className="empty">No detections yet.</p> : null}
+              {(detectionLog.entries ?? []).map((entry) => {
+                const kind = entry.level === 'crit' ? 'crit' : entry.level === 'warn' ? 'warn' : 'ok';
+                const Icon = kindIcon[kind];
+                return (
+                  <div key={`log-${entry.id}`} className={`row ${kind}`}>
+                    <span className="ic">
+                      <Icon size={22} strokeWidth={2.75} aria-hidden />
+                    </span>
+                    <div>
+                      <div className="t">{describeDetection(entry)}</div>
+                      <div className="time">
+                        <time dateTime={entry.at}>{formatLogTime(entry.at)}</time>
+                        {entry.kind === 'alert' && entry.detail ? ` · ${entry.detail}` : ''}
+                      </div>
                     </div>
                   </div>
                 );

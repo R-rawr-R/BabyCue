@@ -12,6 +12,8 @@ import {
   type CameraProblem,
 } from '../device';
 import { haptic } from '../haptics';
+import { describeFailure } from '../streaming/FramePusher';
+import { fetchBaby, saveBabyName } from '../net/database';
 import { CA_PATH } from '../net/wireProtocol';
 import type { Prefs, Role } from '../storage';
 
@@ -36,6 +38,9 @@ export function SetupScreen({
   const [name, setName] = useState(initial.name);
   const [problem, setProblem] = useState<CameraProblem | null>(role === 'baby' && !cameraAvailable() ? 'insecure' : null);
   const [busy, setBusy] = useState(false);
+  /** The server has no baby yet: ask for the name before going on. */
+  const [asking, setAsking] = useState(false);
+  const [error, setError] = useState('');
   const install = useInstallPrompt();
   const press = useRef<ReturnType<typeof setTimeout>>(undefined);
 
@@ -46,7 +51,7 @@ export function SetupScreen({
   };
 
   const connect = async () => {
-    if (role === 'baby') {
+    if (role === 'baby' && !asking) {
       if (!cameraAvailable()) {
         haptic('error');
         setProblem('insecure');
@@ -56,17 +61,31 @@ export function SetupScreen({
       try {
         // Ask for the camera now, so the permission prompt comes before the baby screen.
         (await openCamera()).getTracks().forEach((t) => t.stop());
-      } catch (error) {
+      } catch (cameraError) {
         haptic('error');
-        setProblem(describeCameraError(error));
+        setProblem(describeCameraError(cameraError));
         setBusy(false);
         return;
       }
+    }
+    setBusy(true);
+    setError('');
+    try {
+      // The PC keeps the baby's name, so every phone shows the same one.
+      const baby = asking ? await saveBabyName(name) : await fetchBaby();
+      if (baby === null) {
+        haptic('select');
+        setAsking(true);
+        return;
+      }
+      haptic('success');
+      onConnect({ role, name: baby.name });
+    } catch (failure) {
+      haptic('error');
+      setError(describeFailure(failure));
+    } finally {
       setBusy(false);
     }
-    haptic('success');
-    // Only the parent phone names the baby; the baby phone leaves the saved name alone.
-    onConnect({ role, name: role === 'parent' ? name : initial.name });
   };
 
   return (
@@ -121,11 +140,22 @@ export function SetupScreen({
           <span className="label">Home PC</span>
           <div className="pc">{location.host}</div>
         </div>
-        {role === 'parent' ? (
+        {asking ? (
           <div className="field">
-            <label htmlFor="name">Baby's name (optional)</label>
-            <input id="name" className="input" value={name} onChange={(e) => setName(e.target.value)} autoComplete="off" />
-            <span className="hint">Only shown on this phone.</span>
+            <label htmlFor="name">What's your baby's name?</label>
+            <input
+              id="name"
+              className="input"
+              value={name}
+              maxLength={40}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && name.trim()) void connect();
+              }}
+              autoComplete="off"
+              autoFocus
+            />
+            <span className="hint">Saved on the home PC, so every phone uses it.</span>
           </div>
         ) : null}
       </div>
@@ -160,13 +190,19 @@ export function SetupScreen({
       </div>
 
       <div className="actions">
-      {problem ? (
+      {problem || error ? (
         <p className="problem" role="alert">
-          {cameraProblemText[problem]}
+          {problem ? cameraProblemText[problem] : error}
         </p>
       ) : null}
-      <Button className="up" haptic="tap" style={{ animationDelay: '.4s' }} disabled={busy} onClick={() => void connect()}>
-        {busy ? 'Opening the camera…' : 'Connect'}
+      <Button
+        className="up"
+        haptic="tap"
+        style={{ animationDelay: '.4s' }}
+        disabled={busy || (asking && !name.trim())}
+        onClick={() => void connect()}
+      >
+        {busy ? 'Connecting…' : asking ? 'Save and connect' : 'Connect'}
       </Button>
       </div>
     </main>

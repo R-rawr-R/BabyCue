@@ -31,6 +31,8 @@ def typescript_constants() -> dict[str, object]:
         ("VIEW_PATH", protocol.VIEW_PATH),
         ("STATUS_PATH", protocol.STATUS_PATH),
         ("CA_PATH", protocol.CA_PATH),
+        ("BABY_PATH", protocol.BABY_PATH),
+        ("DETECTIONS_PATH", protocol.DETECTIONS_PATH),
         ("MAX_FRAME_BYTES", protocol.MAX_FRAME_BYTES),
     ],
 )
@@ -46,5 +48,7 @@ def test_every_typescript_constant_is_covered():
         "VIEW_PATH",
         "STATUS_PATH",
         "CA_PATH",
+        "BABY_PATH",
+        "DETECTIONS_PATH",
         "MAX_FRAME_BYTES",
     }

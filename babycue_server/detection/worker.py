@@ -17,9 +17,16 @@ import numpy as np
 
 from babycue_server.detection.posture import PostureReading, PostureTracker, classify_posture
 from babycue_server.detection.results import Hazard, PoseEstimate
-from babycue_server.detection.rules import HazardTracker, evaluate
+from babycue_server.detection.rules import HazardTracker, evaluate, friendly_label
 
 log = logging.getLogger(__name__)
+
+
+#: How each confirmed sleep position is filed in the log.
+POSTURE_LEVEL = {"supine": "ok", "side": "warn", "prone": "crit", "unknown": "warn"}
+
+#: ``on_event`` receives keyword arguments for :meth:`babycue_server.db.Database.log_detection`.
+DetectionEvent = dict
 
 
 class PoseModel(Protocol):
@@ -65,6 +72,11 @@ class DetectionWorker:
         self._thread: threading.Thread | None = None
         self.analysed = 0
         self.failures = 0
+        #: Called (on the detection thread, outside any lock) for every detection event worth logging.
+        self.on_event: Callable[[DetectionEvent], None] | None = None
+        self._logged_posture: str | None = None
+        self._logged_hazards: dict[str, Hazard] = {}
+        self._logged_alert: str | None = None
 
     # -- lifecycle -----------------------------------------------------------------------------
 
@@ -95,6 +107,9 @@ class DetectionWorker:
             self._analysed_at = None
             self._posture.reset()
             self._hazards.reset()
+            self._logged_posture = None
+            self._logged_hazards = {}
+            self._logged_alert = None
 
     # -- frame stage ---------------------------------------------------------------------------
 
@@ -173,3 +188,46 @@ class DetectionWorker:
             self._confirmed = self._hazards.update(hazards)
             self._analysed_at = now
             self.analysed += 1
+            events = self._new_events(now)
+        if self.on_event is not None:
+            for event in events:
+                try:
+                    self.on_event(event)
+                except Exception:  # noqa: BLE001 - a full disk must not stop the alerts
+                    log.exception("Could not log a detection")
+
+    def _new_events(self, now: float) -> list[DetectionEvent]:
+        """What changed since the last logged state: a confirmed position, a toy coming or going, a new alert.
+
+        Called under the lock. Logging changes rather than every analysis keeps a night's log readable.
+        """
+        events: list[DetectionEvent] = []
+        reading = self._reading
+        if reading is not None and reading.stable and reading.label != self._logged_posture:
+            self._logged_posture = reading.label
+            events.append(
+                {"kind": "posture", "label": reading.label, "level": POSTURE_LEVEL.get(reading.label), "source": reading.source}
+            )
+        current = {h.label: h for h in self._confirmed}
+        for name, hazard in current.items():
+            if name not in self._logged_hazards:
+                where = "near baby" if hazard.near_baby else "in view"
+                events.append(
+                    {
+                        "kind": "hazard",
+                        "label": name,
+                        "detail": f"{friendly_label(name)} {where}",
+                        "level": "warn",
+                        "score": round(hazard.score, 2),
+                    }
+                )
+        for name in self._logged_hazards.keys() - current.keys():
+            events.append({"kind": "hazard-cleared", "label": name, "detail": f"{friendly_label(name)} gone", "level": "ok"})
+        self._logged_hazards = current
+        alert = evaluate(reading, self._confirmed, now)
+        title = alert["title"] if alert else None
+        if title != self._logged_alert:
+            self._logged_alert = title
+            if alert is not None:
+                events.append({"kind": "alert", "label": alert["title"], "detail": alert["detail"], "level": alert["level"]})
+        return events

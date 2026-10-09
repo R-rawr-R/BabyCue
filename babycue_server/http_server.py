@@ -14,13 +14,16 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from babycue_server.bodyreader import ChunkedSource, IdleTimeout, ServerStopping, SocketSource, read_exact
+from babycue_server.db import Database
 from babycue_server.hub import FrameHub
 from babycue_server.pipeline import FramePipeline
 from babycue_server.protocol import (
+    BABY_PATH,
     CA_PATH,
+    DETECTIONS_PATH,
     DEFAULT_PORT,
     FRAME_LEASE_S,
     FRAME_PATH,
@@ -86,6 +89,7 @@ class RelayServer:
         ca_path: Path | str | None = None,
         ssl_context: ssl.SSLContext | None = None,
         detector: DetectionWorker | None = None,
+        db: Database | None = None,
     ):
         self.host = host
         self.port = port
@@ -93,9 +97,12 @@ class RelayServer:
         self.pipeline = pipeline or FramePipeline()
         #: Safe-sleep analysis; it sees every frame after the pipeline and reports through ``/status``.
         self.detector = detector
+        #: The baby's name and the detection log. Without a file it lives in memory and is lost on restart.
+        self.db = db or Database(":memory:")
         if detector is not None:
             self.pipeline = FramePipeline([*self.pipeline.stages, detector.submit])
             self.hub.on_input_released = detector.reset
+            detector.on_event = lambda event: self.db.log_detection(**event)
         self.input_timeout = input_timeout
         #: The built website (``web/dist``) served at ``/``; without it a bare test page is shown.
         self.web_root = Path(web_root).resolve() if web_root else None
@@ -223,8 +230,47 @@ def _make_handler(owner: RelayServer) -> type[BaseHTTPRequestHandler]:
                 self._send(200, body, "application/json", Cache_Control="no-cache")
             elif path == CA_PATH:
                 self._send_ca()
+            elif path == BABY_PATH:
+                self._json(200, {"baby": owner.db.baby()})
+            elif path == DETECTIONS_PATH:
+                try:
+                    limit = int(parse_qs(urlsplit(self.path).query).get("limit", ["100"])[0])
+                except ValueError:
+                    limit = 100
+                self._json(200, {"detections": owner.db.detections(limit)})
             else:
                 self._static(path)
+
+        def _json(self, status: int, value: object) -> None:
+            self._send(status, json.dumps(value).encode(), "application/json", Cache_Control="no-cache")
+
+        def _name_baby(self) -> None:
+            try:
+                length = int(self.headers.get("Content-Length", ""))
+            except ValueError:
+                self._json(411, {"error": "Content-Length required"})
+                return
+            if not 0 < length <= 1024:
+                self._json(413 if length > 0 else 400, {"error": 'Send {"name": "..."}'})
+                return
+            try:
+                body = read_exact(SocketSource(self.connection, idle_timeout=owner.input_timeout), length)
+            except (EOFError, IdleTimeout, OSError):
+                return
+            try:
+                name = json.loads(body)["name"]
+            except (ValueError, KeyError, TypeError):
+                name = None
+            if not isinstance(name, str):
+                self._json(400, {"error": 'Send {"name": "..."}'})
+                return
+            try:
+                baby = owner.db.set_baby_name(name)
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            log.info("Baby named %r", baby["name"])
+            self._json(200, {"baby": baby})
 
         def _send_ca(self) -> None:
             ca = owner.ca_path
@@ -303,6 +349,9 @@ def _make_handler(owner: RelayServer) -> type[BaseHTTPRequestHandler]:
             path = urlsplit(self.path).path
             if path == FRAME_PATH:
                 self._frame()
+                return
+            if path == BABY_PATH:
+                self._name_baby()
                 return
             if path != INGEST_PATH:
                 self._send(404, b"Not found\n")

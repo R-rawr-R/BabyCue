@@ -1,7 +1,7 @@
 // BabyCue service worker: the app opens instantly and offline (it then says it cannot reach the PC).
-// Live video, status, frame uploads and the certificate are never cached.
+// Live video, status, frame uploads, the certificate and the database are never cached.
 const CACHE = 'babycue-shell-v1';
-const LIVE = ['/view', '/status', '/frame', '/ingest', '/ca.crt'];
+const LIVE = ['/view', '/status', '/frame', '/ingest', '/ca.crt', '/baby', '/detections'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(['/', '/manifest.webmanifest', '/icon-192.png'])));

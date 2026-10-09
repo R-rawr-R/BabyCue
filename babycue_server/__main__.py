@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 from babycue_server.certs import DEFAULT_DIR, ensure_certs
+from babycue_server.db import Database
 from babycue_server.detection import (
     DEFAULT_MODELS_DIR,
     DetectionSettings,
@@ -90,6 +91,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--web", type=Path, default=DEFAULT_WEB, help="built website to serve (default: web/dist)")
     parser.add_argument("--http", action="store_true", help="plain HTTP: the phone camera will NOT work (browsers need HTTPS)")
     parser.add_argument("--cert-dir", type=Path, default=DEFAULT_DIR, help="where the local CA and server certificate live")
+    parser.add_argument(
+        "--db", type=Path, default=DEFAULT_DIR / "babycue.db", help="SQLite file for the baby's name and the detection log"
+    )
     parser.add_argument("--log-level", default="INFO")
     ml = parser.add_argument_group("safe-sleep detection")
     ml.add_argument(
@@ -111,6 +115,10 @@ def main(argv: list[str] | None = None) -> int:
         print(detector)
         return 2
 
+    db = Database(args.db)
+    baby = db.baby()
+    print(f"Database: {args.db} ({'baby: ' + baby['name'] if baby else 'no baby yet: the first phone to connect asks for the name'})")
+
     addresses = lan_addresses()
     context = None
     ca_path = None
@@ -123,7 +131,7 @@ def main(argv: list[str] | None = None) -> int:
     scheme = "http" if args.http else "https"
     try:
         server = RelayServer(
-            args.host, args.port, web_root=args.web, ca_path=ca_path, ssl_context=context, detector=detector
+            args.host, args.port, web_root=args.web, ca_path=ca_path, ssl_context=context, detector=detector, db=db
         ).start()
     except OSError as exc:
         print(f"Cannot listen on {args.host}:{args.port}: {exc}")
@@ -153,6 +161,7 @@ def main(argv: list[str] | None = None) -> int:
         pass
     finally:
         server.stop()
+        db.close()
     return 0
 
 

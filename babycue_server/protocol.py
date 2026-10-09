@@ -18,6 +18,10 @@ FRAME_PATH = "/frame"
 VIEW_PATH = "/view"
 STATUS_PATH = "/status"
 CA_PATH = "/ca.crt"
+#: GET: ``{"baby": {"name", "created_at"} | null}``. POST ``{"name": "..."}`` names (or renames) the baby.
+BABY_PATH = "/baby"
+#: GET ``?limit=N``: ``{"detections": [...]}``, newest first, each with its local date and time.
+DETECTIONS_PATH = "/detections"
 BOUNDARY = "babycueframe"
 MAX_FRAME_BYTES = 8 * 1024 * 1024
 MAX_VIEWERS = 4
