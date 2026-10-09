@@ -260,15 +260,20 @@ class MainWindow(QMainWindow):
             self.video.set_badge("Enhanced display (not night vision)" if enhanced else None)
             self._shown_seq, self._shown_enhanced = packet.seq, enhanced
 
+        stale = stats.state is ConnectionState.STREAMING and self._stale.is_stale(
+            stats.last_frame_time, now, stats.last_good_fps
+        )
         self._update_readouts(stats, now)
         self._update_overlay(stats, now)
         if stats.state is not self._last_state:
             self._apply_state(stats.state, stats.message)
         elif stats.state is ConnectionState.RECONNECTING:
             self._show_message(stats.message, error=True)
+        if stats.state is ConnectionState.STREAMING:
+            self.state_label.setText("Stale (no new frames)" if stale else _STATE_TEXT[stats.state])
 
         if self._runner is not None:
-            self._update_processing(self._runner.latest(), stats)
+            self._update_processing(self._runner.latest(), stats, stale)
 
     def _update_readouts(self, stats: StreamStats, now: float) -> None:
         if stats.resolution:
@@ -292,8 +297,8 @@ class MainWindow(QMainWindow):
         else:
             self.video.set_overlay(None)
 
-    def _update_processing(self, snapshot: ProcessingSnapshot | None, stats: StreamStats) -> None:
-        if stats.state is not ConnectionState.STREAMING:
+    def _update_processing(self, snapshot: ProcessingSnapshot | None, stats: StreamStats, stale: bool) -> None:
+        if stats.state is not ConnectionState.STREAMING or stale:
             self.processing_label.setText("Paused (no live frames)")
             return
         if snapshot is None:

@@ -42,8 +42,11 @@ def test_stale_overlay_and_recovery(window, qtbot, server):
     qtbot.waitUntil(lambda: window.video.has_image, timeout=5000)
     server.pause()
     qtbot.waitUntil(lambda: (window.video.overlay_text or "").startswith("STALE"), timeout=5000)
+    assert window.state_label.text() == "Stale (no new frames)"
+    qtbot.waitUntil(lambda: window.processing_label.text().startswith("Paused"), timeout=2000)
     server.resume()
     qtbot.waitUntil(lambda: window.video.overlay_text is None, timeout=5000)
+    qtbot.waitUntil(lambda: window.state_label.text() == "Live", timeout=2000)
 
 
 def test_disconnect_clears_frame_and_releases_stream(window, qtbot, server):
