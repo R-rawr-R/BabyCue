@@ -26,26 +26,45 @@ class FrameHub:
         self._latest: Frame | None = None
         self._seq = 0
         self._input_active = False
+        self._lease_owner: str | None = None  # set when the input posts single frames instead of streaming
+        self._lease_until = 0.0
         self._viewers = 0
         self._bad_frames = 0
         self._times: deque[float] = deque()
         self._closed = False
+        #: Called (under the hub lock, so keep it quick) whenever the input phone goes away.
+        self.on_input_released: Callable[[], None] | None = None
 
     # -- input side ---------------------------------------------------------------------------
 
     def claim_input(self) -> bool:
         with self._cond:
+            self._expire_lease(self._clock())
             if self._input_active or self._closed:
                 return False
             self._input_active = True
             return True
 
+    def claim_frame_input(self, owner: str, ttl: float) -> bool:
+        """Take or renew the input slot for ``ttl`` seconds on behalf of a phone that posts single frames."""
+        now = self._clock()
+        with self._cond:
+            self._expire_lease(now)
+            if self._closed or (self._input_active and self._lease_owner != owner):
+                return False
+            self._input_active = True
+            self._lease_owner = owner
+            self._lease_until = now + ttl
+            return True
+
     def release_input(self) -> None:
         with self._cond:
             self._input_active = False
+            self._lease_owner = None
             self._latest = None
             self._times.clear()
             self._cond.notify_all()
+            self._input_released()
 
     def publish(self, data: bytes) -> Frame:
         now = self._clock()
@@ -105,6 +124,7 @@ class FrameHub:
     def stats(self) -> dict:
         now = self._clock()
         with self._cond:
+            self._expire_lease(now)
             self._trim(now)
             fps = 0.0
             if len(self._times) >= 2 and self._times[-1] > self._times[0]:
@@ -116,6 +136,20 @@ class FrameHub:
                 "fps": round(fps, 1),
                 "viewers": self._viewers,
             }
+
+    def _expire_lease(self, now: float) -> None:
+        """A frame-posting input that went quiet frees the slot, like a dropped ingest connection."""
+        if self._lease_owner is not None and now >= self._lease_until:
+            self._input_active = False
+            self._lease_owner = None
+            self._latest = None
+            self._times.clear()
+            self._cond.notify_all()
+            self._input_released()
+
+    def _input_released(self) -> None:
+        if self.on_input_released is not None:
+            self.on_input_released()
 
     def _trim(self, now: float) -> None:
         cutoff = now - self._fps_window

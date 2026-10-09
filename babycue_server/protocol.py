@@ -1,9 +1,10 @@
-"""Wire contract between the server and the Android app.
+"""Wire contract between the server and the phone app.
 
-The Kotlin mirror is ``android/app/src/main/java/com/babycue/camera/net/WireProtocol.kt``;
-``tests/test_wire_contract.py`` fails if the two drift apart.
+The TypeScript mirror is ``mobile/src/net/wireProtocol.ts``; ``tests/test_wire_contract.py`` fails if the
+two drift apart.
 
-* Input phone -> server: ``POST /ingest``, chunked body of ``[uint32 big-endian length][JPEG]`` records.
+* Input phone -> server: ``POST /frame`` with one JPEG as the body (what the React Native app sends), or
+  ``POST /ingest``, one long chunked body of ``[uint32 big-endian length][JPEG]`` records.
 * Server -> output phone: ``GET /view``, ``multipart/x-mixed-replace`` with a Content-Length per part.
 """
 
@@ -13,18 +14,40 @@ import struct
 
 DEFAULT_PORT = 8080
 INGEST_PATH = "/ingest"
+FRAME_PATH = "/frame"
 VIEW_PATH = "/view"
 STATUS_PATH = "/status"
+CA_PATH = "/ca.crt"
+#: GET: ``{"baby": {"name", "created_at"} | null}``. POST ``{"name": "..."}`` names (or renames) the baby.
+BABY_PATH = "/baby"
+#: GET ``?limit=N``: ``{"detections": [...]}``, newest first, each with its local date and time.
+DETECTIONS_PATH = "/detections"
+#: GET: ``{"publicKey": "..."}`` for ``pushManager.subscribe``; 503 when background alarms are off on the server.
+PUSH_KEY_PATH = "/push/key"
+#: POST a ``PushSubscription`` (its ``toJSON()``) to get background alarms on that phone.
+PUSH_SUBSCRIBE_PATH = "/push/subscribe"
+#: POST ``{"endpoint": "..."}`` to stop them.
+PUSH_UNSUBSCRIBE_PATH = "/push/unsubscribe"
+#: POST ``{"endpoint": "..."}``: send a test alarm to that one phone (it must have signed up).
+PUSH_TEST_PATH = "/push/test"
 BOUNDARY = "babycueframe"
 MAX_FRAME_BYTES = 8 * 1024 * 1024
 MAX_VIEWERS = 4
+#: Send buffer for a `/view` socket: about two pictures, so a slow viewer skips frames rather than lagging.
+VIEW_SEND_BUFFER = 64 * 1024
+#: A phone posting single frames keeps the input slot this long after its last frame.
+FRAME_LEASE_S = 5.0
 JPEG_MAGIC = b"\xff\xd8"
 
 _LENGTH = struct.Struct(">I")
 LENGTH_PREFIX_BYTES = _LENGTH.size
 
 VIEW_CONTENT_TYPE = f"multipart/x-mixed-replace; boundary={BOUNDARY}"
-PART_TAIL = b"\r\n"
+#: Sent once, right after the response headers.
+VIEW_PREAMBLE = f"--{BOUNDARY}\r\n".encode("ascii")
+#: Ends a picture *and* opens the next part. A browser only shows a part once it sees the boundary after it,
+#: so sending the boundary straight away (not with the next picture) saves a whole frame of delay.
+PART_TAIL = f"\r\n--{BOUNDARY}\r\n".encode("ascii")
 
 
 def pack_frame(jpeg: bytes) -> bytes:
@@ -37,5 +60,5 @@ def unpack_length(prefix: bytes) -> int:
 
 
 def part_head(length: int) -> bytes:
-    """Bytes that precede a JPEG in a ``/view`` response."""
-    return f"--{BOUNDARY}\r\nContent-Type: image/jpeg\r\nContent-Length: {length}\r\n\r\n".encode("ascii")
+    """Bytes that precede a JPEG in a ``/view`` response (the boundary was already sent with the last part)."""
+    return f"Content-Type: image/jpeg\r\nContent-Length: {length}\r\n\r\n".encode("ascii")

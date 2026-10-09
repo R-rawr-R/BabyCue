@@ -3,3 +3,7 @@
 # opencv-python-headless is used deliberately: the server never needs a GUI.
 opencv-python-headless>=4.8
 numpy>=1.26
+# Generates the local certificate that lets phones open the site over HTTPS (camera and app install need it).
+cryptography>=42
+# Background alarms: Web Push, so a parent phone hears an alert with BabyCue closed.
+pywebpush>=2.0

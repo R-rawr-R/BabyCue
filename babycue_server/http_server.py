@@ -5,19 +5,32 @@ from __future__ import annotations
 import json
 import logging
 import os
+import mimetypes
 import select
 import socket
+import ssl
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from typing import TYPE_CHECKING
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from babycue_server.bodyreader import ChunkedSource, IdleTimeout, ServerStopping, SocketSource, read_exact
+from babycue_server.db import Database
 from babycue_server.hub import FrameHub
 from babycue_server.pipeline import FramePipeline
 from babycue_server.protocol import (
+    BABY_PATH,
+    CA_PATH,
+    DETECTIONS_PATH,
+    PUSH_KEY_PATH,
+    PUSH_SUBSCRIBE_PATH,
+    PUSH_TEST_PATH,
+    PUSH_UNSUBSCRIBE_PATH,
     DEFAULT_PORT,
+    FRAME_LEASE_S,
+    FRAME_PATH,
     INGEST_PATH,
     JPEG_MAGIC,
     LENGTH_PREFIX_BYTES,
@@ -27,47 +40,25 @@ from babycue_server.protocol import (
     STATUS_PATH,
     VIEW_CONTENT_TYPE,
     VIEW_PATH,
+    VIEW_PREAMBLE,
+    VIEW_SEND_BUFFER,
     part_head,
     unpack_length,
 )
 
+if TYPE_CHECKING:
+    from babycue_server.detection.worker import DetectionEvent, DetectionWorker
+    from babycue_server.push import PushNotifier
+
 log = logging.getLogger(__name__)
 
-_INDEX_HTML = (
+_FALLBACK_HTML = (
     b"<!doctype html><meta charset=utf-8><title>BabyCue server</title>"
     b"<body style='margin:0;background:#111;color:#ddd;font-family:sans-serif'>"
     b"<p style='padding:8px'>BabyCue relay. <a style='color:#8cf' href='/status'>status</a> "
-    b"&middot; <a style='color:#8cf' href='/install'>install the Android app</a></p>"
+    b"&middot; the app is not built yet: run <code>npm run build</code> in <code>web/</code></p>"
     b"<img src='/view' style='max-width:100%'></body>"
 )
-
-APK_PATH = "/app.apk"
-INSTALL_PATH = "/install"
-APK_CONTENT_TYPE = "application/vnd.android.package-archive"
-
-
-def _install_page(apk_available: bool) -> bytes:
-    style = "font-family:sans-serif;max-width:32em;margin:2em auto;padding:0 1em;line-height:1.5"
-    if apk_available:
-        body = (
-            f"<h1>Install BabyCue</h1><p><a href='{APK_PATH}' style='display:inline-block;padding:.8em 1.2em;"
-            "background:#2a6;color:#fff;text-decoration:none;border-radius:6px'>Download the Android app</a></p>"
-            "<ol><li>Open the downloaded <b>app-debug.apk</b>.</li>"
-            "<li>If Android asks, allow <b>Install unknown apps</b> for this browser, "
-            "then go back and tap Install.</li>"
-            "<li>Open BabyCue, choose <b>Input</b> (camera) or <b>Output</b> (viewer), and enter this server's "
-            "address.</li></ol><p>Only install apps from a network and a PC you trust: this download is plain "
-            "unencrypted HTTP.</p>"
-        )
-    else:
-        body = (
-            "<h1>App not available</h1><p>This server has no Android app file to share. On the PC, build it "
-            "(<code>gradlew assembleDebug</code> in <code>android/</code>) or start the server with "
-            "<code>--apk path\\to\\app-debug.apk</code>.</p>"
-        )
-    head = "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
-    return f"{head}<title>Install BabyCue</title><body style='{style}'>{body}</body>".encode()
-
 
 class _ProtocolViolation(Exception):
     def __init__(self, status: int, message: str):
@@ -77,6 +68,15 @@ class _ProtocolViolation(Exception):
 
 class _Httpd(ThreadingHTTPServer):
     daemon_threads = True
+    ssl_context: ssl.SSLContext | None = None
+
+    def get_request(self):
+        sock, addr = super().get_request()
+        if self.ssl_context is not None:
+            # The handshake happens in the handler thread, so one slow client cannot stall accept().
+            sock = self.ssl_context.wrap_socket(sock, server_side=True, do_handshake_on_connect=False)
+        return sock, addr
+
     # On Windows SO_REUSEADDR lets a second process bind a port that is already in use.
     allow_reuse_address = os.name != "nt"
 
@@ -90,21 +90,42 @@ class RelayServer:
         hub: FrameHub | None = None,
         pipeline: FramePipeline | None = None,
         input_timeout: float = 10.0,
-        apk_path: Path | str | None = None,
+        web_root: Path | str | None = None,
+        ca_path: Path | str | None = None,
+        ssl_context: ssl.SSLContext | None = None,
+        detector: DetectionWorker | None = None,
+        db: Database | None = None,
+        push: PushNotifier | None = None,
     ):
         self.host = host
         self.port = port
         self.hub = hub or FrameHub()
         self.pipeline = pipeline or FramePipeline()
+        #: Safe-sleep analysis; it sees every frame after the pipeline and reports through ``/status``.
+        self.detector = detector
+        #: The baby's name and the detection log. Without a file it lives in memory and is lost on restart.
+        self.db = db or Database(":memory:")
+        #: Background alarms (Web Push); ``None`` when the server runs without them.
+        self.push = push
+        if detector is not None:
+            self.pipeline = FramePipeline([*self.pipeline.stages, detector.submit])
+            self.hub.on_input_released = detector.reset
+            detector.on_event = self._on_detection
         self.input_timeout = input_timeout
-        #: The one file served at ``/app.apk`` so phones on the network can install the app from this server.
-        self.apk_path = Path(apk_path) if apk_path else None
+        #: The built website (``web/dist``) served at ``/``; without it a bare test page is shown.
+        self.web_root = Path(web_root).resolve() if web_root else None
+        #: The local CA certificate offered at ``/ca.crt`` so a phone can trust this server.
+        self.ca_path = Path(ca_path) if ca_path else None
+        self.ssl_context = ssl_context
         self._stopping = threading.Event()
         self._httpd: _Httpd | None = None
         self._thread: threading.Thread | None = None
 
     def start(self) -> RelayServer:
+        if self.detector is not None:
+            self.detector.start()
         self._httpd = _Httpd((self.host, self.port), _make_handler(self))
+        self._httpd.ssl_context = self.ssl_context
         self.port = self._httpd.server_address[1]
         self._thread = threading.Thread(
             target=self._httpd.serve_forever, kwargs={"poll_interval": 0.1}, name="babycue-http", daemon=True
@@ -121,6 +142,8 @@ class RelayServer:
             self._httpd = None
         if self._thread is not None:
             self._thread.join(2)
+        if self.detector is not None:
+            self.detector.stop()
 
     def __enter__(self) -> RelayServer:
         return self.start()
@@ -128,16 +151,35 @@ class RelayServer:
     def __exit__(self, *exc) -> None:
         self.stop()
 
+    def _on_detection(self, event: DetectionEvent) -> None:
+        """Log every detection; a new alert also wakes the parent phones that asked for background alarms."""
+        self.db.log_detection(**event)
+        if event["kind"] == "alert" and self.push is not None:
+            self.push.notify(event["label"], event.get("detail", ""), event.get("level") or "warn")
+
     @property
     def stopping(self) -> bool:
         return self._stopping.is_set()
 
+    def status(self) -> dict:
+        """What ``GET /status`` returns. Detection results are only included while a camera is connected."""
+        stats = self.hub.stats()
+        if self.detector is not None:
+            found = self.detector.snapshot() if stats["input_connected"] else {}
+            stats["alert"] = found.get("alert")
+            stats["detection"] = found.get("detection")
+        return stats
+
 
 def _client_gone(conn: socket.socket) -> bool:
-    """True if the peer has closed its end (readable with no data), without consuming anything."""
+    """True if the peer has closed its end. A viewer sends nothing after its request, so a read means EOF."""
     try:
         readable, _, _ = select.select([conn], [], [], 0)
-        return bool(readable) and conn.recv(1, socket.MSG_PEEK) == b""
+        if not readable:
+            return False
+        if isinstance(conn, ssl.SSLSocket):
+            return conn.recv(1) == b""  # MSG_PEEK is not allowed on TLS sockets
+        return conn.recv(1, socket.MSG_PEEK) == b""
     except OSError:
         return True
 
@@ -148,16 +190,44 @@ def _make_handler(owner: RelayServer) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
         rbufsize = 0  # no read-ahead: the ingest body is read straight from the socket
+        timeout = 15  # a kept-alive connection that goes quiet is closed
+
+        _tls_ok = True
+
+        def setup(self):
+            if isinstance(self.request, ssl.SSLSocket):
+                self.request.settimeout(10)
+                try:
+                    self.request.do_handshake()
+                except OSError as exc:  # includes ssl.SSLError: a client that does not trust the certificate
+                    log.info("TLS handshake with %s failed: %s", self.client_address[0], exc)
+                    self._tls_ok = False
+                    return
+                self.request.settimeout(None)
+            super().setup()
+
+        def handle(self):
+            if self._tls_ok:
+                super().handle()
+
+        def finish(self):
+            if self._tls_ok:
+                super().finish()
 
         def log_message(self, format, *args):  # noqa: A002
             log.debug("%s %s", self.address_string(), format % args)
 
-        def _send(self, status: int, body: bytes = b"", content_type: str = "text/plain", **headers: str) -> None:
-            self.close_connection = True
+        def log_error(self, format, *args):  # noqa: A002
+            log.info("%s %s", self.address_string(), format % args)
+
+        def _send(
+            self, status: int, body: bytes = b"", content_type: str = "text/plain", keep_alive: bool = False, **headers: str
+        ) -> None:
+            self.close_connection = not keep_alive
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Connection", "close")
+            self.send_header("Connection", "keep-alive" if keep_alive else "close")
             for name, value in headers.items():
                 self.send_header(name.replace("_", "-"), value)
             self.end_headers()
@@ -170,31 +240,123 @@ def _make_handler(owner: RelayServer) -> type[BaseHTTPRequestHandler]:
             if path == VIEW_PATH:
                 self._view()
             elif path == STATUS_PATH:
-                self._send(200, json.dumps(hub.stats()).encode(), "application/json", Cache_Control="no-cache")
-            elif path == "/":
-                self._send(200, _INDEX_HTML, "text/html")
-            elif path == INSTALL_PATH:
-                self._send(200, _install_page(self._apk() is not None), "text/html; charset=utf-8")
-            elif path == APK_PATH:
-                self._send_apk()
+                body = json.dumps(owner.status()).encode()
+                self._send(200, body, "application/json", Cache_Control="no-cache")
+            elif path == CA_PATH:
+                self._send_ca()
+            elif path == BABY_PATH:
+                self._json(200, {"baby": owner.db.baby()})
+            elif path == DETECTIONS_PATH:
+                try:
+                    limit = int(parse_qs(urlsplit(self.path).query).get("limit", ["100"])[0])
+                except ValueError:
+                    limit = 100
+                self._json(200, {"detections": owner.db.detections(limit)})
+            elif path == PUSH_KEY_PATH:
+                if owner.push is None:
+                    self._json(503, {"error": "Background alarms are off on the home PC"})
+                else:
+                    self._json(200, {"publicKey": owner.push.public_key})
             else:
-                self._send(404, b"Not found\n")
+                self._static(path)
 
-        def _apk(self) -> Path | None:
-            apk = owner.apk_path
-            return apk if apk is not None and apk.is_file() else None
+        def _json(self, status: int, value: object) -> None:
+            self._send(status, json.dumps(value).encode(), "application/json", Cache_Control="no-cache")
 
-        def _send_apk(self) -> None:
-            apk = self._apk()
-            if apk is None:
-                self._send(404, b"No app file is available on this server\n")
+        def _read_json(self, max_bytes: int = 4096) -> object:
+            """The request's JSON body, or ``None`` after an error reply (or a vanished client)."""
+            try:
+                length = int(self.headers.get("Content-Length", ""))
+            except ValueError:
+                self._json(411, {"error": "Content-Length required"})
+                return None
+            if not 0 < length <= max_bytes:
+                self._json(413 if length > 0 else 400, {"error": "Send a JSON body"})
+                return None
+            try:
+                body = read_exact(SocketSource(self.connection, idle_timeout=owner.input_timeout), length)
+            except (EOFError, IdleTimeout, OSError):
+                self.close_connection = True
+                return None
+            try:
+                return json.loads(body)
+            except ValueError:
+                self._json(400, {"error": "The body is not JSON"})
+                return None
+
+        def _name_baby(self) -> None:
+            body = self._read_json(1024)
+            if body is None:
+                return
+            name = body.get("name") if isinstance(body, dict) else None
+            if not isinstance(name, str):
+                self._json(400, {"error": 'Send {"name": "..."}'})
                 return
             try:
-                data = apk.read_bytes()
-            except OSError:
-                self._send(404, b"No app file is available on this server\n")
+                baby = owner.db.set_baby_name(name)
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
                 return
-            self._send(200, data, APK_CONTENT_TYPE, Content_Disposition=f'attachment; filename="{apk.name}"')
+            log.info("Baby named %r", baby["name"])
+            self._json(200, {"baby": baby})
+
+        def _push_subscription(self, subscribe: bool) -> None:
+            if owner.push is None:
+                self._json(503, {"error": "Background alarms are off on the home PC"})
+                return
+            body = self._read_json()
+            if body is None:
+                return
+            if not isinstance(body, dict):
+                self._json(400, {"error": "Send a push subscription"})
+                return
+            if subscribe:
+                try:
+                    owner.db.add_push_subscription(body)
+                except ValueError as exc:
+                    self._json(400, {"error": str(exc)})
+                    return
+                log.info("A phone turned on background alarms (%d now)", len(owner.db.push_subscriptions()))
+            elif isinstance(body.get("endpoint"), str):
+                owner.db.remove_push_subscription(body["endpoint"])
+            self._json(200, {"ok": True})
+
+        def _send_ca(self) -> None:
+            ca = owner.ca_path
+            if ca is None or not ca.is_file():
+                self._send(404, b"No certificate on this server" + bytes([10]))
+                return
+            self._send(
+                200, ca.read_bytes(), "application/x-x509-ca-cert", Content_Disposition='attachment; filename="babycue-ca.crt"'
+            )
+
+        def _static(self, path: str) -> None:
+            root = owner.web_root
+            if root is None or not (root / "index.html").is_file():
+                if path == "/":
+                    self._send(200, _FALLBACK_HTML, "text/html")
+                else:
+                    self._send(404, b"Not found" + bytes([10]))
+                return
+            target = (root / unquote(path).lstrip("/")).resolve()
+            if not target.is_relative_to(root) or not target.is_file():
+                # Only page-like paths fall back to the app; a missing file or API call is a real 404.
+                if "." in Path(path).name or path.startswith("/assets/"):
+                    self._send(404, b"Not found" + bytes([10]))
+                    return
+                target = root / "index.html"
+            try:
+                data = target.read_bytes()
+            except OSError:
+                self._send(404, b"Not found" + bytes([10]))
+                return
+            kind = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+            if target.suffix == ".webmanifest":
+                kind = "application/manifest+json"
+            if kind.startswith("text/") or kind in ("application/javascript", "application/manifest+json"):
+                kind += "; charset=utf-8"
+            immutable = path.startswith("/assets/")
+            self._send(200, data, kind, Cache_Control="public, max-age=31536000, immutable" if immutable else "no-cache")
 
         def _view(self) -> None:
             if not hub.add_viewer(MAX_VIEWERS):
@@ -203,11 +365,19 @@ def _make_handler(owner: RelayServer) -> type[BaseHTTPRequestHandler]:
             try:
                 self.close_connection = True
                 self.connection.settimeout(10)  # a viewer that stops reading releases its slot
+                self._no_delay()
+                try:
+                    # A small send buffer makes a slow viewer block here, so the hub skips stale pictures
+                    # instead of the OS queueing several of them on the way to the phone.
+                    self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, VIEW_SEND_BUFFER)
+                except OSError:
+                    pass
                 self.send_response(200)
                 self.send_header("Content-Type", VIEW_CONTENT_TYPE)
                 self.send_header("Cache-Control", "no-cache")
                 self.send_header("Connection", "close")
                 self.end_headers()
+                self.wfile.write(VIEW_PREAMBLE)
                 last = 0
                 while not (hub.closed or owner.stopping):
                     frame = hub.await_next(last, 0.5)
@@ -225,7 +395,33 @@ def _make_handler(owner: RelayServer) -> type[BaseHTTPRequestHandler]:
         # -- POST /ingest ---------------------------------------------------------------------
 
         def do_POST(self):  # noqa: N802
-            if urlsplit(self.path).path != INGEST_PATH:
+            path = urlsplit(self.path).path
+            if path == FRAME_PATH:
+                self._frame()
+                return
+            if path == BABY_PATH:
+                self._name_baby()
+                return
+            if path in (PUSH_SUBSCRIBE_PATH, PUSH_UNSUBSCRIBE_PATH):
+                self._push_subscription(subscribe=path == PUSH_SUBSCRIBE_PATH)
+                return
+            if path == PUSH_TEST_PATH:
+                if owner.push is None:
+                    self._json(503, {"error": "Background alarms are off on the home PC"})
+                    return
+                body = self._read_json()
+                if body is None:
+                    return
+                endpoint = body.get("endpoint") if isinstance(body, dict) else None
+                if endpoint not in {s["endpoint"] for s in owner.db.push_subscriptions()}:
+                    self._json(404, {"error": "This phone has not turned on background alarms"})
+                    return
+                owner.push.notify(
+                    "Test alarm", "This is how a BabyCue alarm arrives on this phone.", "crit", test=True, only=endpoint
+                )
+                self._json(200, {"ok": True})
+                return
+            if path != INGEST_PATH:
                 self._send(404, b"Not found\n")
                 return
             if not hub.claim_input():
@@ -271,9 +467,58 @@ def _make_handler(owner: RelayServer) -> type[BaseHTTPRequestHandler]:
             else:
                 self._reply_quietly(200, b"OK\n")
 
-        def _reply_quietly(self, status: int, body: bytes) -> None:
+        def _frame(self) -> None:
+            """One JPEG per request, for phones that cannot hold a streaming upload open."""
             try:
-                self._send(status, body)
+                length = int(self.headers.get("Content-Length", ""))
+            except ValueError:
+                self._send(411, b"Content-Length required\n")
+                return
+            if length <= 0 or length > MAX_FRAME_BYTES:
+                self._send(413 if length > 0 else 400, b"Bad frame length\n")
+                return
+            was_live = hub.stats()["input_connected"]
+            if not hub.claim_frame_input(self.client_address[0], FRAME_LEASE_S):
+                log.warning("Frame from %s refused: another input holds the slot", self.client_address[0])
+                self._send(409, b"Another input is already streaming\n")
+                self._drain()
+                return
+            source = SocketSource(
+                self.connection,
+                should_stop=lambda: hub.closed or owner.stopping,
+                idle_timeout=owner.input_timeout,
+            )
+            try:
+                data = read_exact(source, length)
+            except (EOFError, IdleTimeout, ServerStopping, OSError) as exc:
+                log.info("Frame upload ended early: %s", exc or type(exc).__name__)
+                return
+            if not data.startswith(JPEG_MAGIC):
+                hub.count_bad_frame()
+                self._reply_quietly(400, b"Not a JPEG\n")
+                return
+            # Renew the lease now the picture is in: a slow upload must not let it lapse mid-request.
+            if not hub.claim_frame_input(self.client_address[0], FRAME_LEASE_S):
+                self._reply_quietly(409, b"Another input is already streaming\n")
+                return
+            hub.publish(owner.pipeline.process(data))
+            if not was_live:
+                log.info("Frame input connected from %s", self.client_address[0])
+            # Keep the connection: a phone sends many pictures a second, and a new TLS handshake for each would
+            # add delay. The next request reuses this one.
+            self._no_delay()
+            self._reply_quietly(204, b"", keep_alive=True)
+
+        def _no_delay(self) -> None:
+            """Send small writes at once instead of waiting to batch them (lower delay for video)."""
+            try:
+                self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            except OSError:
+                pass
+
+        def _reply_quietly(self, status: int, body: bytes, keep_alive: bool = False) -> None:
+            try:
+                self._send(status, body, keep_alive=keep_alive)
             except OSError:
                 pass
 
