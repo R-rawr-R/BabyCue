@@ -18,6 +18,7 @@ invented results.
 ```
 
 ## Quick start
+Models: https://drive.google.com/drive/folders/1wtj00Cy1bROzXmyOC1fB3jKZxGL_vAQy?usp=sharing
 
 Requirements: Python 3.11+, Node 20+ (only to build the website), phones on the **same trusted Wi-Fi**.
 
